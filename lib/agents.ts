@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { generateRepoShots, VIEWPORT_PRESETS, THEMES } from "./repo-shot";
 import { buildSourceContext } from "./openai";
-import type { WeeklySource } from "./sample-week";
+import type { WeeklySource } from "./weekly-source";
 
 export const AGENT_MODEL = "gpt-5.6";
 export const SCREENSHOT_TOOL_NAME = "take_screenshots";

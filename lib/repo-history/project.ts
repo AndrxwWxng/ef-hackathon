@@ -9,7 +9,7 @@ import type {
   PullRequest,
   WhatChangedBeat,
   WeeklySource,
-} from "../sample-week";
+} from "../weekly-source";
 
 export type { FeatureItem, WhatChangedBeat };
 export type ProjectedSource = WeeklySource;

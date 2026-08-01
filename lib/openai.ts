@@ -7,7 +7,7 @@ import {
   type RunItem,
 } from "@openai/agents";
 import OpenAI from "openai";
-import { SAMPLE_WEEK, summarizeSource, type WeeklySource } from "./sample-week";
+import { summarizeSource, type WeeklySource } from "./weekly-source";
 
 export const TEXT_MODEL = "gpt-5";
 export const IMAGE_MODEL = "gpt-image-1";
@@ -32,10 +32,6 @@ function getOpenAIClient(): OpenAI {
     throw new Error("OpenAI client failed to initialize");
   }
   return cachedClient;
-}
-
-export function getSource(source?: WeeklySource): WeeklySource {
-  return source ?? SAMPLE_WEEK;
 }
 
 export function buildSourceContext(source: WeeklySource): string {
@@ -98,9 +94,10 @@ export async function generateTextDraft(
   maybeSource?: WeeklySource,
 ): Promise<string> {
   const req: DraftRequest =
-    typeof arg1 === "string"
-      ? { kind: arg1, source: maybeSource ?? getSource() }
-      : arg1;
+    typeof arg1 === "string" ? { kind: arg1, source: maybeSource as WeeklySource } : arg1;
+  if (!req.source) {
+    throw new Error("A WeeklySource is required to generate a draft");
+  }
   const client = getOpenAIClient();
   const context = buildSourceContext(req.source);
   const writtenSamples = (req.writingSamples ?? []).filter((s) => s.trim().length > 0);
@@ -223,7 +220,10 @@ export async function generateAll(
   req: GenerateAllRequest = {},
 ): Promise<GeneratedArtifacts> {
   ensureConfigured();
-  const source = req.source ?? getSource();
+  const source = req.source;
+  if (!source) {
+    throw new Error("A WeeklySource is required to generate artifacts");
+  }
   const draftReq = (kind: DraftKind): DraftRequest => ({
     kind,
     source,

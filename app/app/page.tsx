@@ -384,6 +384,7 @@ export default function AppHome() {
   const writtenSamples = sourceConfig.writingSamples.filter((s) => s.trim().length > 0);
 
   const payloadBody = JSON.stringify({
+    repoUrl: sourceConfig.github,
     mood: sourceConfig.mood === "default" ? undefined : sourceConfig.mood,
     writingSamples: writtenSamples,
   });
@@ -410,7 +411,7 @@ export default function AppHome() {
         const imgRes = await fetch("/api/generate/image", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ kind }),
+          body: JSON.stringify({ kind, repoUrl: sourceConfig.github }),
         });
         if (imgRes.ok) {
           const imgJson = (await imgRes.json()) as { mimeType: string; data: string };

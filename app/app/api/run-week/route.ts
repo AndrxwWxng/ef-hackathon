@@ -4,7 +4,7 @@ import { generateRepoHistory, projectToWeeklySource, RepoHistoryError } from "@/
 import { ingestSource, type IngestInput } from "@/lib/multimodal";
 import { addSource, summarizeForStorage } from "@/lib/multimodal/store";
 import { generateTextDraft, generateImage, imagePromptForSource } from "@/lib/openai";
-import { SAMPLE_WEEK, summarizeSource, type WeeklySource } from "@/lib/sample-week";
+import { type WeeklySource } from "@/lib/weekly-source";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -354,6 +354,3 @@ async function readAnalysis(filePath: string): Promise<string> {
     return "";
   }
 }
-
-void summarizeSource;
-void SAMPLE_WEEK;
