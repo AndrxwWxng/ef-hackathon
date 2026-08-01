@@ -1,13 +1,18 @@
 @import "tailwindcss";
 
 :root {
-  --background: #fbfaf7;
-  --foreground: #171717;
-  --muted: #f1efe9;
-  --border: #e7e3d8;
-  --muted-foreground: #6b6357;
-  --accent: #ff6a3d;
-  --accent-soft: #ffe2d6;
+  --background: #f5f1e8;
+  --foreground: #15130f;
+  --muted: #ebe5d6;
+  --border: #d8d0bd;
+  --muted-foreground: #5e5648;
+  --accent: #e0532b;
+  --accent-deep: #b53a18;
+  --accent-soft: #f6d4c2;
+  --ink: #15130f;
+  --paper: #fbf6ea;
+  --rule: #1f1b14;
+  --positive: #2f6b3a;
 }
 
 @theme inline {
@@ -16,43 +21,49 @@
   --color-muted: var(--muted);
   --color-border: var(--border);
   --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-deep: var(--accent-deep);
+  --color-accent-soft: var(--accent-soft);
+  --color-ink: var(--ink);
+  --color-paper: var(--paper);
+  --color-rule: var(--rule);
   --font-sans: var(--font-geist-sans);
+  --font-serif: var(--font-fraunces);
   --font-mono: var(--font-geist-mono);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0b0a09;
-    --foreground: #ededed;
-    --muted: #15140f;
-    --border: #25231c;
-    --muted-foreground: #a8a094;
-    --accent: #ff7a4d;
-    --accent-soft: #2a1a14;
+    --background: #0d0c0a;
+    --foreground: #f4ead8;
+    --muted: #1a1814;
+    --border: #2a2620;
+    --muted-foreground: #9c9282;
+    --accent: #ff6a3d;
+    --accent-deep: #d34a22;
+    --accent-soft: #3a1f15;
+    --ink: #f4ead8;
+    --paper: #15130f;
+    --rule: #f4ead8;
+    --positive: #6fb87a;
   }
 }
 
 body {
   background-color: var(--background);
-  background-image:
-    radial-gradient(
-      1100px circle at 12% -10%,
-      color-mix(in oklab, var(--accent) 22%, transparent),
-      transparent 60%
-    ),
-    radial-gradient(
-      900px circle at 95% 8%,
-      color-mix(in oklab, var(--accent-soft) 60%, transparent),
-      transparent 65%
-    ),
-    radial-gradient(
-      color-mix(in oklab, var(--foreground) 8%, transparent) 1px,
-      transparent 1px
-    );
-  background-size: auto, auto, 22px 22px;
-  background-position: 0 0, 0 0, 0 0;
-  background-attachment: fixed, fixed, fixed;
   color: var(--foreground);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
   -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--paper);
+}
+
+@layer base {
+  .font-serif {
+    font-family: var(--font-serif), Georgia, serif;
+    font-feature-settings: "ss01", "ss02";
+  }
 }
