@@ -216,6 +216,12 @@ const ENDPOINT_BY_KIND: Record<ArtifactKind, string> = {
   x: "/api/generate/x",
 };
 
+const LABEL_BY_KIND: Record<ArtifactKind, string> = {
+  newsletter: "newsletter",
+  linkedin: "LinkedIn post",
+  x: "X post",
+};
+
 function approxMetric(kind: ArtifactKind, text: string): string {
   if (kind === "x") return `${text.length} chars`;
   if (kind === "linkedin") return `~${text.length.toLocaleString()} chars`;
@@ -238,6 +244,12 @@ type ComposerState =
 
 export default function AppHome() {
   const [activeId, setActiveId] = useState<ArtifactKind>("newsletter");
+  const [posting, setPosting] = useState(false);
+  const [posted, setPosted] = useState<{ url: string; text: string } | null>(null);
+  const [postError, setPostError] = useState<string>("");
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [emailSent, setEmailSent] = useState<{ id: string; to: string[]; subject: string } | null>(null);
+  const [emailError, setEmailError] = useState<string>("");
   const [targets, setTargets] = useState<Set<ArtifactKind>>(
     new Set<ArtifactKind>(["newsletter", "linkedin", "x"]),
   );
@@ -253,6 +265,17 @@ export default function AppHome() {
   const [pendingFile, setPendingFile] = useState<{ modality: "audio" | "video"; file: File } | null>(null);
   const [artifacts, setArtifacts] = useState<Artifact[]>(initialArtifacts);
   const [state, setState] = useState<GenerationState>({ status: "idle" });
+  const [progress, setProgress] = useState<
+    | {
+        step: number;
+        steps: number;
+        artifactIndex: number;
+        artifactTotal: number;
+        artifactLabel: string;
+        stepLabel: string;
+      }
+    | null
+  >(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [sourceConfig, setSourceConfig] = useState<SourceConfig>({
     github: "https://github.com/AndrxwWxng/ef-hackathon",
@@ -348,7 +371,7 @@ export default function AppHome() {
     return `Week ${repoAge.weeks} · since ${sinceFmt.format(created)}`;
   }, [repoAge]);
 
-  async function generateOne(kind: ArtifactKind): Promise<void> {
+  async function generateOne(kind: ArtifactKind, imageAfter: boolean): Promise<void> {
     setState({ status: "loading" });
     try {
       const textRes = await fetch(ENDPOINT_BY_KIND[kind], {
@@ -362,7 +385,7 @@ export default function AppHome() {
       }
       const textJson = (await textRes.json()) as { text: string };
       let imageDataUrl: string | undefined;
-      if (kind === "linkedin" || kind === "x") {
+      if (imageAfter) {
         const imgRes = await fetch("/api/generate/image", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -403,12 +426,80 @@ export default function AppHome() {
     setFeedback("");
 
     const order: ArtifactKind[] = ["newsletter", "linkedin", "x"];
-    for (const target of order) {
-      if (!targets.has(target)) continue;
-      await generateOne(target);
+    const queue = order.filter((t) => targets.has(t));
+    const artifactTotal = queue.length;
+
+    type Step = { kind: ArtifactKind; phase: "read" | "draft" | "image" };
+    const plan: Step[] = [];
+    for (const kind of queue) {
+      plan.push({ kind, phase: "read" });
+      plan.push({ kind, phase: "draft" });
+      if (kind === "linkedin" || kind === "x") plan.push({ kind, phase: "image" });
     }
+    const stepsTotal = plan.length;
+    let stepCursor = 0;
+    let currentArtifactIndex = 0;
+
+    setProgress({
+      step: 0,
+      steps: stepsTotal,
+      artifactIndex: 0,
+      artifactTotal,
+      artifactLabel: LABEL_BY_KIND[queue[0]],
+      stepLabel: "Starting run",
+    });
+
+    for (const step of plan) {
+      if (queue.indexOf(step.kind) !== currentArtifactIndex) {
+        currentArtifactIndex = queue.indexOf(step.kind);
+      }
+      const artifactLabel = LABEL_BY_KIND[step.kind];
+      const stepLabel =
+        step.phase === "read"
+          ? `Reading ${artifactLabel} repo history`
+          : step.phase === "draft"
+            ? `Writing ${artifactLabel} draft`
+            : `Rendering ${artifactLabel} image`;
+
+      setProgress((p) =>
+        p
+          ? {
+              ...p,
+              artifactIndex: currentArtifactIndex,
+              artifactLabel,
+              step: stepCursor,
+              stepLabel,
+            }
+          : p,
+      );
+
+      if (step.phase === "draft") {
+        const hasImageStep = plan.some(
+          (s) => s.kind === step.kind && s.phase === "image",
+        );
+        await generateOne(step.kind, hasImageStep);
+      } else {
+        // "read" and "image" phases don't have a dedicated client-side call —
+        // they happen server-side as part of generateOne, but we tick the
+        // cursor so the bar visibly advances between draft and image phases.
+      }
+
+      stepCursor += 1;
+      setProgress((p) => (p ? { ...p, step: stepCursor } : p));
+    }
+
+    setProgress((p) =>
+      p
+        ? {
+            ...p,
+            step: p.steps,
+            stepLabel: `Done · ${artifactTotal} draft${artifactTotal === 1 ? "" : "s"}`,
+          }
+        : p,
+    );
     setRunning(false);
     setState({ status: "idle" });
+    window.setTimeout(() => setProgress(null), 1200);
   }
 
   function selectTab(kind: ArtifactKind) {
@@ -419,6 +510,8 @@ export default function AppHome() {
       next.add(kind);
       return next;
     });
+    setEmailSent(null);
+    setEmailError("");
   }
     function toggleTarget(kind: ArtifactKind) {
       setTargets((prev) => {
@@ -451,10 +544,98 @@ export default function AppHome() {
       }));
     }
 
+    async function handleSendEmail() {
+      if (active.id !== "newsletter") return;
+      const markdown = active.body;
+      if (!markdown.trim()) {
+        setEmailError("Newsletter body is empty.");
+        return;
+      }
+      setSendingEmail(true);
+      setEmailError("");
+      setEmailSent(null);
+      try {
+        const res = await fetch("/app/api/send-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            body: markdown,
+            author: authorForKind(active.id),
+            week: githubDisplay,
+          }),
+        });
+        const json = (await res.json().catch(() => ({}))) as {
+          id?: string;
+          to?: string[];
+          subject?: string;
+          error?: string;
+        };
+        if (!res.ok || !json.id) {
+          setEmailError(json.error ?? `Send failed (${res.status})`);
+          return;
+        }
+        setEmailSent({
+          id: json.id,
+          to: json.to ?? [],
+          subject: json.subject ?? "",
+        });
+      } catch (err) {
+        setEmailError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSendingEmail(false);
+      }
+    }
+
+    async function handlePostToX() {
+      const text = "Hello world!";
+      setPosting(true);
+      setPostError("");
+      setPosted(null);
+      try {
+        const res = await fetch("/app/api/x/post", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        const json = (await res.json().catch(() => ({}))) as { error?: string; url?: string; text?: string };
+        if (!res.ok || !json.url) {
+          setPostError(json.error ?? `Post failed (${res.status})`);
+          return;
+        }
+        setPosted({ url: json.url, text: json.text ?? text });
+      } catch (err) {
+        setPostError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setPosting(false);
+      }
+    }
+
     async function handleRegenerate() {
+      setEmailSent(null);
+      setEmailError("");
       setRunning(true);
-      await generateOne(activeId);
+      const label = LABEL_BY_KIND[activeId];
+      const hasImage = activeId === "linkedin" || activeId === "x";
+      const steps = hasImage ? 2 : 1;
+      setProgress({
+        step: 0,
+        steps,
+        artifactIndex: 0,
+        artifactTotal: 1,
+        artifactLabel: label,
+        stepLabel: `Re-reading ${label} repo history`,
+      });
+      await generateOne(activeId, hasImage);
+      setProgress({
+        step: steps,
+        steps,
+        artifactIndex: 0,
+        artifactTotal: 1,
+        artifactLabel: label,
+        stepLabel: "Done",
+      });
       setRunning(false);
+      window.setTimeout(() => setProgress(null), 1200);
     }
 
     const isGenerating = running || state.status === "loading";
@@ -642,6 +823,35 @@ export default function AppHome() {
         >
           <span className="font-mono text-[10px] uppercase tracking-[0.12em]">Error</span>
           <span className="ml-2">{state.error}</span>
+        </div>
+      )}
+
+      {progress && (
+        <div
+          role="progressbar"
+          aria-valuenow={progress.step}
+          aria-valuemin={0}
+          aria-valuemax={progress.steps}
+          className="flex items-center gap-3 rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)] px-4 py-2.5"
+        >
+          <span
+            aria-hidden
+            className={
+              "h-1.5 w-1.5 shrink-0 rounded-full " +
+              (progress.step >= progress.steps ? "bg-emerald-500" : "bg-amber-500 animate-pulse")
+            }
+          />
+          <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--app-soft)]">
+            <div
+              className="h-full rounded-full bg-[var(--app-ink)] transition-[width] duration-300 ease-out"
+              style={{
+                width: `${progress.steps === 0 ? 0 : (progress.step / progress.steps) * 100}%`,
+              }}
+            />
+          </div>
+          <span className="shrink-0 font-mono text-[11px] text-[var(--app-muted)] tabular-nums">
+            {progress.artifactLabel} · {progress.artifactIndex + 1}/{progress.artifactTotal} · {progress.stepLabel}
+          </span>
         </div>
       )}
 
@@ -948,6 +1158,34 @@ export default function AppHome() {
                   <CopyIcon className="h-3 w-3" />
                   Copy
                 </button>
+                {active.id === "newsletter" && (
+                  <button
+                    type="button"
+                    onClick={handleSendEmail}
+                    disabled={sendingEmail || isGenerating || !active.generated}
+                    title={
+                      active.generated
+                        ? "Send this newsletter as an HTML email via Resend"
+                        : "Generate a draft first"
+                    }
+                    className="inline-flex h-8 items-center gap-1.5 rounded-full bg-emerald-600 px-3 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <SendIcon className="h-3 w-3" />
+                    {sendingEmail ? "Sending…" : emailSent ? "Sent" : "Send via Email"}
+                  </button>
+                )}
+                {active.id === "x" && (
+                  <button
+                    type="button"
+                    onClick={handlePostToX}
+                    disabled={posting || isGenerating}
+                    title="Post 'Hello world!' to X"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-full bg-[#1d9bf0] px-3 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <SiXIcon className="h-3 w-3" />
+                    {posting ? "Posting…" : posted ? "Posted" : "Post to X"}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -962,6 +1200,53 @@ export default function AppHome() {
                 <p className="mt-4 text-center font-mono text-[10.5px] uppercase tracking-[0.12em] text-[var(--app-muted)]">
                   Click Run the week to generate a draft.
                 </p>
+              )}
+              {active.id === "newsletter" && (emailSent || emailError) && (
+                <div
+                  className={
+                    "mx-auto mt-3 max-w-md rounded-lg border px-3 py-2 text-[12px] " +
+                    (emailError
+                      ? "border-red-200 bg-red-50 text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-400"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-400")
+                  }
+                  role={emailError ? "alert" : "status"}
+                >
+                  {emailError ? (
+                    <span>Send failed: {emailError}</span>
+                  ) : emailSent ? (
+                    <span>
+                      Sent to {emailSent.to.join(", ")}.{` `}
+                      <span className="font-mono text-[11px] opacity-80">id: {emailSent.id}</span>
+                    </span>
+                  ) : null}
+                </div>
+              )}
+              {active.id === "x" && (posted || postError) && (
+                <div
+                  className={
+                    "mx-auto mt-3 max-w-md rounded-lg border px-3 py-2 text-[12px] " +
+                    (postError
+                      ? "border-red-200 bg-red-50 text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-400"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-400")
+                  }
+                  role={postError ? "alert" : "status"}
+                >
+                  {postError ? (
+                    <span>Post failed: {postError}</span>
+                  ) : posted ? (
+                    <span>
+                      Posted to X.{" "}
+                      <a
+                        href={posted.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-mono underline underline-offset-2"
+                      >
+                        View on X ↗
+                      </a>
+                    </span>
+                  ) : null}
+                </div>
               )}
             </div>
 
@@ -1021,13 +1306,13 @@ export default function AppHome() {
 function authorForKind(kind: ArtifactKind): string {
   if (kind === "newsletter") return "Multimail Team";
   if (kind === "linkedin") return "M. Kapoor";
-  return "polar-relay";
+  return "multimail";
 }
 
 function titleForKind(kind: ArtifactKind): string {
-  if (kind === "newsletter") return "Polar Relay · weekly";
-  if (kind === "linkedin") return "Founder · Polar Relay · weekly build notes";
-  return "· engineering at Polar Relay";
+  if (kind === "newsletter") return "Multimail · weekly";
+  if (kind === "linkedin") return "Founder · Multimail · weekly build notes";
+  return "· engineering at Multimail";
 }
 
 function SourceRow({
@@ -1142,7 +1427,7 @@ function ChannelPreview({
     ) : artifact.id === "linkedin" ? (
       <LinkedInPreview body={artifact.body} authorName={authorName} authorTitle={authorTitle} />
     ) : (
-      <XPreview body={artifact.body} authorName={authorName} authorHandle="polar_relay" />
+      <XPreview body={artifact.body} authorName={authorName} authorHandle="multimail_dev" />
     );
 
   return (
@@ -1395,6 +1680,15 @@ function SparkIcon({ className }: { className?: string }) {
   );
 }
 
+function SendIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M14.5 1.5 1.5 6l5 2 2 5z" />
+      <path d="m6.5 8 3-3" />
+    </svg>
+  );
+}
+
 function RefreshIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -1441,6 +1735,14 @@ function TickIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M3 8l3 3 7-7" />
+    </svg>
+  );
+}
+
+function SiXIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden>
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24h-6.66l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
     </svg>
   );
 }
