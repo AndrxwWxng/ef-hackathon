@@ -1,0 +1,18 @@
+{
+  "name": "multipost",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Internal utility to publish a single piece of content to X, LinkedIn, and email in one call.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dry": "node --env-file=.env src/publish.js --file post.md",
+    "live": "node --env-file=.env src/publish.js --live --file post.md",
+    "auth:linkedin": "node --env-file=.env scripts/linkedin-auth.js"
+  },
+  "dependencies": {
+    "twitter-api-v2": "^1.29.0"
+  }
+}
