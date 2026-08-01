@@ -31,14 +31,25 @@ export function buildSourceContext(source: WeeklySource): string {
   return summarizeSource(source);
 }
 
-type DraftKind = "newsletter" | "linkedin" | "x";
+export type DraftKind = "newsletter" | "linkedin" | "x";
+
+const AUDIENCE_INSTRUCTIONS =
+  "Audience: a non-technical sponsor or partner. They want to know what changed, " +
+  "what it means for them, and what is next. " +
+  "Voice the work in plain language. Keep concrete specs, numbers, and named features " +
+  "when they matter to the reader. " +
+  "Strip engineer-flavored identifiers that do not help the reader: do not mention " +
+  "commit SHAs, repository paths, PR numbers, voice-note IDs, or internal tags. " +
+  "Frame the writing as a progress check, not a play-by-play. Lead with the win, not the diff. " +
+  "You never invent partners, metrics, or testimonials. " +
+  "You avoid em dashes; use hyphens, colons, or rewrite instead.";
 
 const KIND_INSTRUCTIONS: Record<DraftKind, string> = {
   newsletter:
-    "Write a 350-550 word sponsor-facing newsletter. Structure: a one-line headline, a 2-sentence intro that states the headline plainly, then 3-5 short sections with bolded section headers covering the week's shipped work, a 'what is next' beat, and a closing line. Tone is calm, partner-facing, and specific. Use Markdown for structure (headings with ##, bold with **, lists with -). Reference concrete items from the source. Do not invent partners, metrics, or testimonials.",
+    "Write a 350-550 word sponsor-facing newsletter. Structure: a one-line headline, a 2-sentence intro that states the headline plainly, then 3-5 short sections with bolded section headers covering the week's shipped work, a 'what is next' beat, and a closing line. Tone is calm, partner-facing, and specific. Use Markdown for structure (headings with ##, bold with **, lists with -).",
   linkedin:
-    "Write a LinkedIn post of roughly 800-1,400 characters. Open with the single most interesting shipped item in one short line, then 3-5 short paragraphs that surface the other wins without bullet-list formatting. Close with a one-sentence forward-looking line. Use minimal Markdown (line breaks, occasional **bold** for emphasis). Tone is direct and status-forward. Reference concrete items from the source. Do not invent partners, metrics, or testimonials.",
-  x: "Write a single X (Twitter) post, 240-280 characters total. Lead with the week's main shipping beat, weave in one or two concrete details, end on a forward note. Lowercase is fine. No hashtags unless natural. Do not invent partners, metrics, or testimonials.",
+    "Write a LinkedIn post of roughly 800-1,400 characters. Open with the single most interesting shipped item in one short line, then 3-5 short paragraphs that surface the other wins without bullet-list formatting. Close with a one-sentence forward-looking line. Use minimal Markdown (line breaks, occasional **bold** for emphasis). Tone is direct and status-forward.",
+  x: "Write a single X (Twitter) post, 240-280 characters total. Lead with the week's main shipping beat, weave in one or two concrete details, end on a forward note. Lowercase is fine. No hashtags unless natural.",
 };
 
 const TONE_INSTRUCTIONS: Record<string, string> = {
@@ -54,16 +65,31 @@ const TONE_INSTRUCTIONS: Record<string, string> = {
 
 const TEXT_AGENT_INSTRUCTIONS =
   "You write matched drafts for a small dev team's weekly update. " +
-  "You only use information present in the supplied source data. " +
-  "You never invent partner names, metrics, or testimonials. " +
-  "You avoid em dashes; use hyphens, colons, or rewrite instead. " +
-  "Return ONLY the draft text, no preamble, no labels.";
+  AUDIENCE_INSTRUCTIONS +
+  " Return ONLY the draft text, no preamble, no labels.";
+
+const IMAGE_AGENT_INSTRUCTIONS =
+  "You generate editorial illustrations for a small dev team's weekly update. " +
+  "Use the image_generation tool exactly once per request. " +
+  "Begin your tool message with the verb 'Draw' (the docs note that draw-style prompts perform better). " +
+  "Never include text, logos, faces, commit SHAs, or repository paths in the prompt. " +
+  "After the tool returns, reply with a single short line confirming the aspect ratio used.";
+
+function resolveToneInstruction(mood?: string): string {
+  if (!mood) return TONE_INSTRUCTIONS.default;
+  const key = mood.trim().toLowerCase();
+  if (TONE_INSTRUCTIONS[key]) return TONE_INSTRUCTIONS[key];
+  return `Use a tone that matches this mood/voice guidance: "${mood}". Apply it consistently across the draft.`;
+}
 
 function textAgent(): Agent {
   return new Agent({
     name: "weekly-draft-writer",
     model: TEXT_MODEL,
     instructions: TEXT_AGENT_INSTRUCTIONS,
+    modelSettings: {
+      reasoning: { effort: "low" },
+    },
   });
 }
 
@@ -71,11 +97,10 @@ function imageAgent(): Agent {
   return new Agent({
     name: "weekly-illustration",
     model: TEXT_MODEL,
-    instructions:
-      "You generate editorial illustrations for a small dev team's weekly update. " +
-      "You always call the image_generation tool exactly once. " +
-      "You never include any text, logo, or face in the prompt. " +
-      "After the tool returns, reply with a single short line confirming the aspect ratio used.",
+    instructions: IMAGE_AGENT_INSTRUCTIONS,
+    modelSettings: {
+      reasoning: { effort: "low" },
+    },
     tools: [
       imageGenerationTool({
         model: IMAGE_MODEL,
@@ -119,7 +144,9 @@ function extractFinalText(result: RunShape): string {
   }
   for (const item of result.newItems) {
     if (item.type !== "message_output_item") continue;
-    const content = (item as unknown as { rawItem?: { content?: Array<{ text?: string; type?: string }> } }).rawItem?.content;
+    const content = (item as unknown as {
+      rawItem?: { content?: Array<{ text?: string; type?: string }> };
+    }).rawItem?.content;
     if (!Array.isArray(content)) continue;
     const text = content
       .filter((p) => p && (p.type === "output_text" || typeof p.text === "string"))
@@ -163,15 +190,7 @@ export type DraftRequest = {
   writingSamples?: string[];
 };
 
-function resolveToneInstruction(mood?: string): string {
-  if (!mood) return TONE_INSTRUCTIONS.default;
-  const key = mood.trim().toLowerCase();
-  if (TONE_INSTRUCTIONS[key]) return TONE_INSTRUCTIONS[key];
-  return `Use a tone that matches this mood/voice guidance: "${mood}". Apply it consistently across the draft.`;
-}
-
-export async function generateTextDraft(req: DraftRequest): Promise<string> {
-  ensureConfigured();
+function buildDraftPrompt(req: DraftRequest): string {
   const { kind, source, mood, writingSamples } = req;
   const context = buildSourceContext(source);
 
@@ -186,14 +205,32 @@ export async function generateTextDraft(req: DraftRequest): Promise<string> {
 
   const toneLine = resolveToneInstruction(mood);
 
-  const prompt =
+  return (
     `Source data for the week (do not invent beyond this):\n\n` +
     context +
     sampleBlock +
-    `\n\nTarget mood/tone (apply throughout): ${mood ? mood : "(no override, use neutral default)"}. Guidance: ${toneLine}.` +
+    `\n\nTarget mood/tone (apply throughout): ${mood ? mood : "(no override, use neutral default)"}. ` +
+    `Guidance: ${toneLine}.` +
     `\n\nTask: ${KIND_INSTRUCTIONS[kind]}\n\n` +
-    `Return ONLY the draft text, no preamble, no labels.`;
-  const result = await run(textAgent(), prompt, {});
+    `Return ONLY the draft text, no preamble, no labels.`
+  );
+}
+
+export async function generateTextDraft(
+  kind: DraftKind,
+  source: WeeklySource,
+): Promise<string>;
+export async function generateTextDraft(req: DraftRequest): Promise<string>;
+export async function generateTextDraft(
+  kindOrReq: DraftKind | DraftRequest,
+  maybeSource?: WeeklySource,
+): Promise<string> {
+  ensureConfigured();
+  const req: DraftRequest =
+    typeof kindOrReq === "string"
+      ? { kind: kindOrReq, source: maybeSource ?? getSource() }
+      : kindOrReq;
+  const result = await run(textAgent(), buildDraftPrompt(req), {});
   const text = extractFinalText(result);
   return text.replace(/—/g, "-");
 }
@@ -204,6 +241,49 @@ export async function generateImage(
   ensureConfigured();
   const result = await run(imageAgent(), prompt, {});
   return extractBase64Image(result);
+}
+
+export type GeneratedArtifacts = {
+  newsletter: string;
+  linkedin: string;
+  x: string;
+  linkedinImage?: { base64: string };
+  xImage?: { base64: string };
+};
+
+export type GenerateAllRequest = {
+  source?: WeeklySource;
+  mood?: string;
+  writingSamples?: string[];
+};
+
+export async function generateAll(
+  req: GenerateAllRequest = {},
+): Promise<GeneratedArtifacts> {
+  ensureConfigured();
+  const source = req.source ?? getSource();
+  const draftReq = (kind: DraftKind): DraftRequest => ({
+    kind,
+    source,
+    mood: req.mood,
+    writingSamples: req.writingSamples,
+  });
+
+  const newsletterP = generateTextDraft(draftReq("newsletter"));
+  const linkedinP = generateTextDraft(draftReq("linkedin"));
+  const xP = generateTextDraft(draftReq("x"));
+  const linkedinImgP = generateImage(imagePromptForSource(source, "linkedin"));
+  const xImgP = generateImage(imagePromptForSource(source, "x"));
+
+  const [newsletter, linkedin, x, linkedinImage, xImage] = await Promise.all([
+    newsletterP,
+    linkedinP,
+    xP,
+    linkedinImgP,
+    xImgP,
+  ]);
+
+  return { newsletter, linkedin, x, linkedinImage, xImage };
 }
 
 export function imagePromptForSource(
@@ -218,7 +298,7 @@ export function imagePromptForSource(
         ? "square 1024x1024, suitable for an X post image"
         : "landscape 1200x600";
   return (
-    `Editorial illustration for a small dev team's weekly update. ` +
+    `Draw an editorial illustration for a small dev team's weekly update. ` +
     `Theme: ${themes}. ` +
     `Style: flat, modern, minimal, warm neutral palette with one accent color, no logos, no text, no faces. ` +
     `Composition: ${aspect}.`

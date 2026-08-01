@@ -1,9 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
-import { generateTextDraft, getSource, type DraftRequest } from "../../../../lib/openai";
+import { NextResponse } from "next/server";
+import { generateTextDraft, getSource } from "../../../../lib/openai";
 
 export const runtime = "nodejs";
 
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => ({}))) as {
       mood?: string;
@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
       source,
       mood: body.mood,
       writingSamples: body.writingSamples,
-    } satisfies DraftRequest);
+    });
     return NextResponse.json({ kind: "newsletter", text, source: source.week });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";

@@ -1,11 +1,40 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
-import { NewsletterPreview } from "./_components/NewsletterPreview";
-import { LinkedInPreview } from "./_components/LinkedInPreview";
-import { XPreview } from "./_components/XPreview";
+type Modality = "text" | "audio" | "video" | "discord" | "slack";
+
+type Source = {
+  id: string;
+  modality: Modality;
+  label: string;
+  origin: string;
+  bytes?: number;
+  mimeType?: string;
+  durationMs?: number;
+  createdAt: string;
+  summary?: string;
+  bullets?: string[];
+  themes?: string[];
+  tone?: string;
+  keyPhrases?: { phrase: string; count: number; weight: number }[];
+  quotes?: string[];
+  transcriptPreview?: string;
+  status?: "ready" | "ingesting" | "error";
+  detail?: string;
+  errorMessage?: string;
+  connector?: {
+    kind: "discord" | "slack";
+    channelId: string;
+    channelName?: string;
+    workspace?: string;
+    memberCount?: number;
+    topic?: string;
+    lastFetchedAt?: string;
+    lastMessageCount?: number;
+  };
+};
 
 type ArtifactKind = "newsletter" | "linkedin" | "x";
 
@@ -18,7 +47,6 @@ type Artifact = {
   metric: string;
   tone: string;
   imageDataUrl?: string;
-  generated: boolean;
 };
 
 type GenerationState = {
@@ -26,21 +54,56 @@ type GenerationState = {
   error?: string;
 };
 
-type SourceConfig = {
-  github: string;
-  writingSamples: string[];
-  mood: string;
+type ContextSummary = {
+  sourceCount: number;
+  words: number;
+  minutes: number;
+  bullets: string[];
+  themes: string[];
+  tone: string;
+  phrases: { phrase: string; count: number }[];
+  body: string;
 };
 
-const MOOD_OPTIONS: { id: string; label: string; hint: string }[] = [
-  { id: "default", label: "Default", hint: "Neutral, professional voice" },
-  { id: "Calm and measured", label: "Calm and measured", hint: "Short sentences, no hype" },
-  { id: "Warm and personal", label: "Warm and personal", hint: "First-person, direct to reader" },
-  { id: "Direct and punchy", label: "Direct and punchy", hint: "Leads with the news" },
-  { id: "Witty and a bit dry", label: "Witty and a bit dry", hint: "Light, subtle humor" },
-  { id: "Playful and energetic", label: "Playful and energetic", hint: "Enthusiastic, not breathless" },
-  { id: "Technical and matter-of-fact", label: "Technical and matter-of-fact", hint: "Engineer-coded, file-level" },
-  { id: "Visionary and forward-looking", label: "Visionary and forward-looking", hint: "Frames a longer arc" },
+const MODALITY_META: Record<Modality, { label: string; meta: string; placeholder: string; accept?: string; help: string }> = {
+  text: {
+    label: "Notes & docs",
+    meta: "text",
+    placeholder: "Paste notes, a doc, a brief…",
+    help: "Drop text in. We will normalize, extract themes, and surface key phrases.",
+  },
+  audio: {
+    label: "Voice notes",
+    meta: "audio",
+    placeholder: "Drop an .mp3, .m4a, .wav…",
+    accept: "audio/*",
+    help: "Whisper transcribes audio locally when OPENAI_API_KEY is set; otherwise a deterministic mock transcript is used.",
+  },
+  video: {
+    label: "Video",
+    meta: "video",
+    placeholder: "Drop an .mp4, .mov, .webm…",
+    accept: "video/*",
+    help: "Frames are extracted and stitched into a transcript alongside any built-in audio track.",
+  },
+  discord: {
+    label: "Discord channel",
+    meta: "discord",
+    placeholder: "Channel ID + bot token",
+    help: "Add a Discord bot token and channel id. The bot must be a member of the channel. We pull the latest 50 messages by default.",
+  },
+  slack: {
+    label: "Slack channel",
+    meta: "slack",
+    placeholder: "Channel ID + bot token",
+    help: "Add a Slack bot token (xoxb-…) and channel id. The bot must be invited to the channel. We pull the latest 50 messages by default.",
+  },
+};
+
+const runSizes = [
+  { id: "small", label: "Newsletter", note: "1 source" },
+  { id: "medium", label: "Newsletter + LinkedIn", note: "All sources" },
+  { id: "full", label: "Newsletter + LinkedIn + X", note: "All sources" },
 ];
 
 const initialArtifacts: Artifact[] = [
@@ -51,10 +114,9 @@ const initialArtifacts: Artifact[] = [
     blurb:
       "A short, sourced note your partners can read in 90 seconds: what shipped, what is next, and one ask.",
     body:
-      "Click generate to draft this from the week's source data. Tone pulls from the selected mood and writing samples.",
+      "This week we shipped a faster ingest path (4x), closed two long-standing integration gaps, and softened the digest tone. Next up: a calmer mobile view, a sponsor-only changelog, and a quiet month-end recap.",
     metric: "ready to generate",
     tone: "Calm, partner-facing",
-    generated: false,
   },
   {
     id: "linkedin",
@@ -66,7 +128,6 @@ const initialArtifacts: Artifact[] = [
       "Click generate to draft this from the week's source data. Image is generated alongside the text.",
     metric: "ready to generate",
     tone: "Direct, status-forward",
-    generated: false,
   },
   {
     id: "x",
@@ -78,14 +139,89 @@ const initialArtifacts: Artifact[] = [
       "Click generate to draft this from the week's source data. Image is generated alongside the text.",
     metric: "ready to generate",
     tone: "Terse, engineer-coded",
-    generated: false,
   },
 ];
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(reader.error ?? new Error("FileReader failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatBytes(bytes?: number): string {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatDuration(durationMs?: number): string {
+  if (!durationMs) return "";
+  const totalSeconds = Math.round(durationMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 1) return `${seconds}s`;
+  if (minutes < 60) return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${(minutes % 60).toString().padStart(2, "0")}m`;
+}
+
+function formatTimestamp(value?: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function describeSource(source: Source): string {
+  const meta = MODALITY_META[source.modality];
+  if (source.status === "ingesting") return `${meta.label} · ingesting…`;
+  if (source.status === "error") return `${meta.label} · ${source.errorMessage ?? "failed"}`;
+  if (source.modality === "text") {
+    return `${meta.label} · ${source.transcriptPreview ? `${source.transcriptPreview.split(/\s+/).filter(Boolean).length} words` : "empty"}`;
+  }
+  if (source.modality === "discord" || source.modality === "slack") {
+    const channel = source.connector?.channelName ? `#${source.connector.channelName}` : "channel";
+    const msgs = source.connector?.lastMessageCount;
+    const fetched = formatTimestamp(source.connector?.lastFetchedAt);
+    const parts = [
+      meta.label,
+      source.connector?.workspace ? `${source.connector.workspace} · ${channel}` : channel,
+      msgs ? `${msgs} msgs` : null,
+      fetched ? `synced ${fetched}` : null,
+    ].filter(Boolean);
+    return parts.join(" · ");
+  }
+  if (source.modality === "audio") return `${meta.label} · ${formatDuration(source.durationMs) || "—"}`;
+  return `${meta.label} · ${formatDuration(source.durationMs) || "—"}`;
+}
+
+function summarizeKeyPhrases(source: Source): string {
+  if (!source.keyPhrases?.length) return "";
+  return source.keyPhrases.slice(0, 3).map((p) => p.phrase).join(" · ");
+}
 
 const ENDPOINT_BY_KIND: Record<ArtifactKind, string> = {
   newsletter: "/api/generate/newsletter",
   linkedin: "/api/generate/linkedin",
   x: "/api/generate/x",
+};
+
+type CombinedResponse = {
+  source: string;
+  newsletter: string;
+  linkedin: string;
+  x: string;
+  linkedinImage?: { mimeType: string; data: string };
+  xImage?: { mimeType: string; data: string };
 };
 
 function approxMetric(kind: ArtifactKind, text: string): string {
@@ -95,47 +231,74 @@ function approxMetric(kind: ArtifactKind, text: string): string {
   return `${words} words`;
 }
 
+type ConnectorDraft = {
+  modality: "discord" | "slack";
+  token: string;
+  channelId: string;
+  workspace?: string;
+  label: string;
+  limit: number;
+};
+
+type ComposerState =
+  | { kind: "file"; modality: "text" | "audio" | "video"; label: string; text: string }
+  | { kind: "connector"; modality: "discord" | "slack"; draft: ConnectorDraft };
+
 export default function AppHome() {
   const [activeId, setActiveId] = useState<ArtifactKind>("newsletter");
-  const [targets, setTargets] = useState<Set<ArtifactKind>>(
-    new Set<ArtifactKind>(["newsletter", "linkedin", "x"]),
-  );
+  const [size, setSize] = useState<string>("full");
   const [running, setRunning] = useState(false);
+  const [sources, setSources] = useState<Source[]>([]);
+  const [context, setContext] = useState<ContextSummary | null>(null);
+  const [loadingSources, setLoadingSources] = useState(false);
+  const [composer, setComposer] = useState<ComposerState | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [feedback, setFeedback] = useState<string>("");
+  const [refreshingId, setRefreshingId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [pendingFile, setPendingFile] = useState<{ modality: "audio" | "video"; file: File } | null>(null);
   const [artifacts, setArtifacts] = useState<Artifact[]>(initialArtifacts);
   const [state, setState] = useState<GenerationState>({ status: "idle" });
-
-  const [sourceConfig, setSourceConfig] = useState<SourceConfig>({
-    github: "multimail/api",
-    writingSamples: [
-      "We shipped a faster ingest path (4x), closed two long-standing integration gaps, and softened the digest tone.",
-    ],
-    mood: "Calm and measured",
-  });
 
   const active = useMemo(
     () => artifacts.find((a) => a.id === activeId) ?? artifacts[0],
     [activeId, artifacts],
   );
 
-  const writtenSamples = sourceConfig.writingSamples.filter((s) => s.trim().length > 0);
+  const refresh = useCallback(async () => {
+    setLoadingSources(true);
+    try {
+      const [sourcesRes, contextRes] = await Promise.all([
+        fetch("/app/api/sources", { cache: "no-store" }),
+        fetch("/app/api/context", { cache: "no-store" }),
+      ]);
+      if (sourcesRes.ok) {
+        const json = (await sourcesRes.json()) as { sources: Source[] };
+        setSources(json.sources);
+      }
+      if (contextRes.ok) {
+        const json = (await contextRes.json()) as ContextSummary;
+        setContext(json);
+      }
+    } finally {
+      setLoadingSources(false);
+    }
+  }, []);
 
-  const payloadBody = JSON.stringify({
-    mood: sourceConfig.mood === "default" ? undefined : sourceConfig.mood,
-    writingSamples: writtenSamples,
-  });
-
-  const githubDisplay = sourceConfig.github.trim().length > 0
-    ? sourceConfig.github.trim()
-    : "owner/repo";
+  useEffect(() => {
+    // Initial fetch from the server. Treat the network as the external
+    // system: useEffect is the right primitive for syncing React state
+    // with what the server currently has. Suppressing the lint rule
+    // here because the alternative (eager setState in render) would
+    // re-render on every parent update.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    refresh().catch(() => undefined);
+  }, [refresh]);
 
   async function generateOne(kind: ArtifactKind): Promise<void> {
     setState({ status: "loading" });
     try {
-      const textRes = await fetch(ENDPOINT_BY_KIND[kind], {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: payloadBody,
-      });
+      const textRes = await fetch(ENDPOINT_BY_KIND[kind], { method: "POST" });
       if (!textRes.ok) {
         const errBody = (await textRes.json().catch(() => ({}))) as { error?: string };
         throw new Error(errBody.error ?? `text request failed (${textRes.status})`);
@@ -161,7 +324,6 @@ export default function AppHome() {
                 body: textJson.text,
                 metric: approxMetric(kind, textJson.text),
                 imageDataUrl,
-                generated: true,
               }
             : a,
         ),
@@ -174,17 +336,57 @@ export default function AppHome() {
   }
 
   async function handleRun() {
-    if (targets.size === 0) {
-      setState({ status: "error", error: "Pick at least one artifact to generate." });
-      return;
-    }
     setRunning(true);
-    const order: ArtifactKind[] = ["newsletter", "linkedin", "x"];
-    for (const t of order) {
-      if (!targets.has(t)) continue;
-      await generateOne(t);
+    setState({ status: "loading" });
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const errBody = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(errBody.error ?? `request failed (${res.status})`);
+      }
+      const json = (await res.json()) as CombinedResponse;
+      const targets: ArtifactKind[] =
+        size === "small"
+          ? ["newsletter"]
+          : size === "medium"
+            ? ["newsletter", "linkedin"]
+            : ["newsletter", "linkedin", "x"];
+      const textByKind: Record<ArtifactKind, string> = {
+        newsletter: json.newsletter,
+        linkedin: json.linkedin,
+        x: json.x,
+      };
+      const imageByKind: Partial<Record<ArtifactKind, string>> = {
+        linkedin: json.linkedinImage
+          ? `data:${json.linkedinImage.mimeType};base64,${json.linkedinImage.data}`
+          : undefined,
+        x: json.xImage
+          ? `data:${json.xImage.mimeType};base64,${json.xImage.data}`
+          : undefined,
+      };
+      setArtifacts((prev) =>
+        prev.map((a) =>
+          targets.includes(a.id)
+            ? {
+                ...a,
+                body: textByKind[a.id],
+                metric: approxMetric(a.id, textByKind[a.id]),
+                imageDataUrl: imageByKind[a.id],
+              }
+            : a,
+        ),
+      );
+      setState({ status: "idle" });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setState({ status: "error", error: message });
+    } finally {
+      setRunning(false);
     }
-    setRunning(false);
   }
 
   async function handleRegenerate() {
@@ -193,38 +395,139 @@ export default function AppHome() {
     setRunning(false);
   }
 
-  function toggleTarget(kind: ArtifactKind) {
-    setTargets((prev) => {
-      const next = new Set(prev);
-      if (next.has(kind)) next.delete(kind);
-      else next.add(kind);
-      return next;
-    });
-  }
-
-  function updateSample(idx: number, value: string) {
-    setSourceConfig((prev) => {
-      const samples = [...prev.writingSamples];
-      samples[idx] = value;
-      return { ...prev, writingSamples: samples };
-    });
-  }
-
-  function addSample() {
-    setSourceConfig((prev) => ({
-      ...prev,
-      writingSamples: [...prev.writingSamples, ""],
-    }));
-  }
-
-  function removeSample(idx: number) {
-    setSourceConfig((prev) => ({
-      ...prev,
-      writingSamples: prev.writingSamples.filter((_, i) => i !== idx),
-    }));
-  }
-
   const isGenerating = running || state.status === "loading";
+
+  const openComposer = (modality: Modality) => {
+    setFeedback("");
+    setPendingFile(null);
+    if (modality === "discord" || modality === "slack") {
+      setComposer({
+        kind: "connector",
+        modality,
+        draft: {
+          modality,
+          token: "",
+          channelId: "",
+          workspace: "",
+          label: "",
+          limit: 50,
+        },
+      });
+      return;
+    }
+    setComposer({ kind: "file", modality, label: "", text: "" });
+  };
+
+  const closeComposer = () => {
+    setComposer(null);
+    setPendingFile(null);
+    setFeedback("");
+  };
+
+  const handleFile = (file: File | null) => {
+    if (!composer || composer.kind !== "file" || composer.modality === "text" || !file) return;
+    setPendingFile({ modality: composer.modality, file });
+    setComposer((prev) => (prev && prev.kind === "file" ? { ...prev, label: prev.label || file.name } : prev));
+  };
+
+  const submitComposer = async () => {
+    if (!composer) return;
+    setAdding(true);
+    setFeedback("");
+    try {
+      let body: Record<string, unknown>;
+      if (composer.kind === "connector") {
+        const draft = composer.draft;
+        if (!draft.token.trim()) {
+          setFeedback("bot token is required");
+          setAdding(false);
+          return;
+        }
+        if (!draft.channelId.trim()) {
+          setFeedback("channel id is required");
+          setAdding(false);
+          return;
+        }
+        body = {
+          kind: draft.modality,
+          token: draft.token.trim(),
+          channelId: draft.channelId.trim(),
+          workspace: draft.workspace?.trim() || undefined,
+          label: draft.label.trim() || undefined,
+          limit: draft.limit,
+        };
+      } else if (composer.modality === "text") {
+        if (!composer.text.trim()) {
+          setFeedback("paste some text first");
+          setAdding(false);
+          return;
+        }
+        body = { kind: "text", label: composer.label.trim() || "Pasted note", text: composer.text };
+      } else {
+        if (!pendingFile) {
+          setFeedback("pick a file first");
+          setAdding(false);
+          return;
+        }
+        const dataUrl = await readFileAsDataUrl(pendingFile.file);
+        body = {
+          kind: composer.modality,
+          label: composer.label.trim() || pendingFile.file.name,
+          fileName: pendingFile.file.name,
+          mimeType: pendingFile.file.type,
+          dataUrl,
+        };
+      }
+      const res = await fetch("/app/api/ingest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        setFeedback(json.error ?? "ingest failed");
+        setAdding(false);
+        return;
+      }
+      setFeedback("added");
+      await refresh();
+      closeComposer();
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const removeSource = async (id: string) => {
+    const res = await fetch(`/app/api/sources/${id}`, { method: "DELETE" });
+    if (res.ok) await refresh();
+  };
+
+  const refreshSource = async (id: string) => {
+    setRefreshingId(id);
+    try {
+      const res = await fetch(`/app/api/sources/${id}/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setFeedback(json.error ?? "refresh failed");
+        return;
+      }
+      await refresh();
+    } finally {
+      setRefreshingId(null);
+    }
+  };
+
+  const triggerFilePicker = () => {
+    fileInputRef.current?.click();
+  };
+
+  const connectedCount = sources.filter((s) => s.status !== "error").length;
 
   return (
     <main className="mx-auto flex min-h-[calc(100vh-72px)] w-full max-w-[1240px] flex-col justify-center gap-5 px-6 py-6">
@@ -243,7 +546,9 @@ export default function AppHome() {
             Wrap the week into three drafts.
           </h1>
           <p className="max-w-xl text-[12.5px] leading-relaxed text-[var(--app-muted)]">
-            Aug 4 – Aug 10 · pulled from <span className="text-[var(--app-ink)]">{githubDisplay}</span> · gpt-5 for text, gpt-image-1 for images · nothing sent without a click.
+            {context
+              ? `${context.sourceCount} source${context.sourceCount === 1 ? "" : "s"} · ${context.words} words · ${context.minutes.toFixed(1)} min ingested · drafts generated locally · nothing sent without a click.`
+              : "Aug 4 – Aug 10 · drafts generated locally · nothing sent without a click."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
@@ -257,8 +562,8 @@ export default function AppHome() {
           <button
             type="button"
             onClick={handleRun}
-            disabled={isGenerating || targets.size === 0}
-            className="group inline-flex h-10 items-center justify-center gap-2 rounded-full bg-[var(--app-ink)] px-5 text-sm font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={isGenerating}
+            className="group inline-flex h-10 items-center justify-center gap-2 rounded-full bg-[var(--app-ink)] px-5 text-sm font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px disabled:opacity-50"
           >
             {isGenerating ? "Running…" : "Run the week"}
             <svg
@@ -287,136 +592,157 @@ export default function AppHome() {
         </div>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[340px_1fr]">
+      <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
         <aside className="flex flex-col gap-4">
-          <section className="flex flex-col gap-4 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
+          <section className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
             <div className="flex items-center justify-between">
               <h2 className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
                 Sources
               </h2>
               <span className="font-mono text-[11px] text-[var(--app-muted)]">
-                {writtenSamples.length + (sourceConfig.github.trim() ? 1 : 0)} active
+                {connectedCount} / {sources.length || 0}
               </span>
             </div>
-
-            <div className="flex flex-col gap-2 rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)]/40 p-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span aria-hidden className="grid h-5 w-5 place-items-center rounded-md bg-[#0f172a] text-white">
-                    <svg viewBox="0 0 16 16" className="h-3 w-3" fill="currentColor" aria-hidden>
-                      <path d="M8 .2a8 8 0 0 0-2.5 15.6c.4.1.5-.2.5-.4v-1.4c-2.2.5-2.7-1-2.7-1-.4-.9-.9-1.2-.9-1.2-.7-.5.1-.5.1-.5.8.1 1.2.8 1.2.8.7 1.2 1.9.9 2.4.7.1-.5.3-.9.5-1.1-1.8-.2-3.6-.9-3.6-3.9 0-.9.3-1.6.8-2.1-.1-.2-.4-1 .1-2.1 0 0 .7-.2 2.2.8a7.7 7.7 0 0 1 4 0c1.5-1 2.2-.8 2.2-.8.5 1.1.2 1.9.1 2.1.5.5.8 1.2.8 2.1 0 3-1.8 3.7-3.6 3.9.3.3.6.8.6 1.6v2.4c0 .2.1.5.5.4A8 8 0 0 0 8 .2z" />
-                    </svg>
-                  </span>
-                  <span className="text-[12.5px] font-medium">GitHub</span>
-                </div>
-                <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-accent)]">
-                  connected
-                </span>
-              </div>
-              <label className="flex flex-col gap-1">
-                <span className="sr-only">GitHub repository</span>
-                <input
-                  type="text"
-                  value={sourceConfig.github}
-                  onChange={(e) =>
-                    setSourceConfig((prev) => ({ ...prev, github: e.target.value }))
+            <ul className="flex flex-col">
+              {sources.length === 0 && !loadingSources && (
+                <li className="py-3 text-[12px] text-[var(--app-muted)]">
+                  No sources yet — paste a note, drop a voice memo, add a video clip, or connect a Discord or Slack channel.
+                </li>
+              )}
+              {sources.map((source, i) => (
+                <li
+                  key={source.id}
+                  className={
+                    "flex items-start gap-3 py-2.5 " +
+                    (i !== 0 ? "border-t border-[var(--app-line)]" : "")
                   }
-                  placeholder="owner/repo or https://github.com/owner/repo"
-                  className="h-9 w-full rounded-md border border-[var(--app-line)] bg-[var(--app-paper)] px-3 font-mono text-[12px] outline-none transition-colors focus:border-[var(--app-ink)]"
-                />
-              </label>
-              <p className="text-[10.5px] leading-snug text-[var(--app-muted)]">
-                Paste a repo URL or <span className="font-mono">owner/repo</span>. We pull
-                merged PRs + commits for the selected week.
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-2 rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)]/40 p-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span aria-hidden className="grid h-5 w-5 place-items-center rounded-md bg-[var(--app-ink)] text-[var(--app-paper)] font-serif text-[10px]">
-                    Aa
-                  </span>
-                  <span className="text-[12.5px] font-medium">Writing samples</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={addSample}
-                  className="rounded-full border border-[var(--app-line)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-ink)]"
                 >
-                  + add
-                </button>
-              </div>
-              <div className="flex flex-col gap-2">
-                {sourceConfig.writingSamples.map((sample, idx) => (
-                  <div key={`sample-${idx}`} className="flex flex-col gap-1.5">
-                    <label className="flex flex-col gap-1">
-                      <span className="sr-only">Writing sample {idx + 1}</span>
-                      <textarea
-                        rows={2}
-                        value={sample}
-                        onChange={(e) => updateSample(idx, e.target.value)}
-                        placeholder={`Paste an example ${idx === 0 ? "newsletter intro" : "post"} from your team…`}
-                        className="w-full resize-none rounded-md border border-[var(--app-line)] bg-[var(--app-paper)] px-3 py-2 text-[12px] leading-snug outline-none transition-colors focus:border-[var(--app-ink)]"
-                      />
-                    </label>
-                    {sourceConfig.writingSamples.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => removeSample(idx)}
-                        className="self-end font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-accent)]"
-                      >
-                        remove
-                      </button>
+                  <span
+                    aria-hidden
+                    className={
+                      "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full " +
+                      (source.status === "error"
+                        ? "bg-[#c23a2b]"
+                        : "bg-[var(--app-accent)]")
+                    }
+                  />
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="truncate text-[12.5px] font-medium text-[var(--app-ink)]">
+                        {source.label}
+                      </span>
+                      <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
+                        {MODALITY_META[source.modality].meta}
+                      </span>
+                    </div>
+                    <p className="truncate text-[11.5px] text-[var(--app-muted)]">
+                      {describeSource(source)}
+                    </p>
+                    {summarizeKeyPhrases(source) && (
+                      <p className="truncate text-[11px] italic text-[var(--app-muted)]">
+                        {summarizeKeyPhrases(source)}
+                      </p>
                     )}
                   </div>
-                ))}
-              </div>
-              <p className="text-[10.5px] leading-snug text-[var(--app-muted)]">
-                Used to calibrate voice. The drafts read from your team&apos;s words,
-                they don&apos;t lift sentences.
-              </p>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {source.connector && (
+                      <button
+                        type="button"
+                        onClick={() => refreshSource(source.id)}
+                        disabled={refreshingId === source.id}
+                        aria-label={`Refresh ${source.label}`}
+                        className="grid h-5 w-5 place-items-center rounded-full text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)] hover:text-[var(--app-ink)] disabled:opacity-50"
+                      >
+                        <svg
+                          viewBox="0 0 16 16"
+                          className={
+                            "h-3 w-3 " + (refreshingId === source.id ? "animate-spin" : "")
+                          }
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden
+                        >
+                          <path d="M2 8a6 6 0 0 1 10.39-4.1M14 8a6 6 0 0 1-10.39 4.1" />
+                          <path d="M13 1.5v3.5h-3.5M3 14.5v-3.5h3.5" />
+                        </svg>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeSource(source.id)}
+                      className="grid h-5 w-5 place-items-center rounded-full text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)] hover:text-[var(--app-ink)]"
+                      aria-label={`Remove ${source.label}`}
+                    >
+                      <svg viewBox="0 0 16 16" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 3l10 10M13 3L3 13" />
+                      </svg>
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {(Object.keys(MODALITY_META) as Modality[]).map((modality) => (
+                <button
+                  key={modality}
+                  type="button"
+                  onClick={() => openComposer(modality)}
+                  className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[var(--app-line)] px-3 text-[12px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)]"
+                >
+                  <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M8 3v10M3 8h10" />
+                  </svg>
+                  {MODALITY_META[modality].label}
+                </button>
+              ))}
             </div>
           </section>
 
-          <section className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                Mood / tone
-              </h2>
-              <span className="font-mono text-[11px] text-[var(--app-muted)]">
-                {sourceConfig.mood === "default" ? "default" : "1 applied"}
-              </span>
-            </div>
-            <div className="grid grid-cols-2 gap-1.5">
-              {MOOD_OPTIONS.map((m) => {
-                const selected = sourceConfig.mood === m.id;
-                return (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() =>
-                      setSourceConfig((prev) => ({ ...prev, mood: m.id }))
-                    }
-                    aria-pressed={selected}
-                    className={
-                      "flex flex-col items-start gap-0.5 rounded-md border px-2 py-1.5 text-left transition-all " +
-                      (selected
-                        ? "border-[var(--app-ink)] bg-[var(--app-soft)] shadow-[0_8px_24px_-16px_rgba(15,23,42,0.35)]"
-                        : "border-[var(--app-line)] bg-[var(--app-paper)] hover:border-[var(--app-muted)]")
-                    }
-                  >
-                    <span className="text-[11.5px] font-medium text-[var(--app-ink)]">
-                      {m.label}
+          {context && context.sourceCount > 0 && (
+            <section className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
+              <div className="flex items-center justify-between">
+                <h2 className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                  Ingested context
+                </h2>
+                <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
+                  {context.tone}
+                </span>
+              </div>
+              {context.themes.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {context.themes.map((theme) => (
+                    <span
+                      key={theme}
+                      className="rounded-full bg-[var(--app-soft)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--app-ink)]"
+                    >
+                      {theme}
                     </span>
-                    <span className="text-[10px] leading-snug text-[var(--app-muted)]">
-                      {m.hint}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
+                  ))}
+                </div>
+              )}
+              {context.bullets.length > 0 && (
+                <ul className="flex flex-col gap-1 text-[11.5px] leading-snug text-[var(--app-ink)]">
+                  {context.bullets.slice(0, 4).map((bullet, i) => (
+                    <li key={i} className="flex gap-2">
+                      <span aria-hidden className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-[var(--app-accent)]" />
+                      <span>{bullet}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <details className="text-[11px] text-[var(--app-muted)]">
+                <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.16em]">
+                  Raw context for the agent
+                </summary>
+                <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--app-line)] bg-[var(--app-soft)] p-3 text-[11px] leading-relaxed text-[var(--app-ink)]">
+                  {context.body}
+                </pre>
+              </details>
+            </section>
+          )}
 
           <section className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
             <div className="flex items-center justify-between">
@@ -424,23 +750,19 @@ export default function AppHome() {
                 Run size
               </h2>
               <span className="font-mono text-[11px] text-[var(--app-muted)]">
-                {targets.size}/3 selected
+                1× week
               </span>
             </div>
-            <div className="flex flex-col">
-              {[
-                { id: "newsletter" as const, label: "Newsletter", note: "350-550 words" },
-                { id: "linkedin" as const, label: "LinkedIn", note: "~1,000 chars" },
-                { id: "x" as const, label: "X post", note: "240-280 chars" },
-              ].map((option, i) => {
-                const selected = targets.has(option.id);
+            <div role="radiogroup" aria-label="Run size" className="flex flex-col">
+              {runSizes.map((option, i) => {
+                const selected = size === option.id;
                 return (
                   <button
                     key={option.id}
                     type="button"
-                    role="checkbox"
+                    role="radio"
                     aria-checked={selected}
-                    onClick={() => toggleTarget(option.id)}
+                    onClick={() => setSize(option.id)}
                     className={
                       "group flex items-center justify-between gap-3 py-2.5 text-left transition-colors " +
                       (i !== 0 ? "border-t border-[var(--app-line)]" : "")
@@ -450,16 +772,14 @@ export default function AppHome() {
                       <span
                         aria-hidden
                         className={
-                          "grid h-4 w-4 place-items-center rounded border transition-colors " +
+                          "grid h-4 w-4 place-items-center rounded-full border " +
                           (selected
-                            ? "border-[var(--app-ink)] bg-[var(--app-ink)] text-[var(--app-paper)]"
+                            ? "border-[var(--app-ink)]"
                             : "border-[var(--app-line)] group-hover:border-[var(--app-muted)]")
                         }
                       >
                         {selected && (
-                          <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                            <path d="M3 8l3 3 7-7" />
-                          </svg>
+                          <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-ink)]" />
                         )}
                       </span>
                       <span
@@ -479,22 +799,6 @@ export default function AppHome() {
                   </button>
                 );
               })}
-            </div>
-            <div className="flex items-center justify-between gap-2 border-t border-[var(--app-line)] pt-2">
-              <button
-                type="button"
-                onClick={() => setTargets(new Set(["newsletter", "linkedin", "x"]))}
-                className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-ink)]"
-              >
-                select all
-              </button>
-              <button
-                type="button"
-                onClick={() => setTargets(new Set())}
-                className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-ink)]"
-              >
-                clear
-              </button>
             </div>
           </section>
         </aside>
@@ -576,8 +880,8 @@ export default function AppHome() {
                 <button
                   type="button"
                   onClick={handleRegenerate}
-                  disabled={isGenerating || !targets.has(active.id)}
-                  className="inline-flex h-7 items-center justify-center rounded-full border border-[var(--app-line)] px-3 text-[11.5px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)] disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={isGenerating}
+                  className="inline-flex h-7 items-center justify-center rounded-full border border-[var(--app-line)] px-3 text-[11.5px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)] disabled:opacity-50"
                 >
                   Regenerate
                 </button>
@@ -590,7 +894,7 @@ export default function AppHome() {
                   }}
                   className="inline-flex h-7 items-center justify-center gap-1.5 rounded-full bg-[var(--app-ink)] px-3 text-[11.5px] font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px"
                 >
-                  Copy markdown
+                  Copy
                   <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                     <rect x="5" y="5" width="8" height="8" rx="1.5" />
                     <path d="M3 11V3.5A.5.5 0 0 1 3.5 3H11" />
@@ -598,34 +902,33 @@ export default function AppHome() {
                 </button>
               </div>
             </div>
-
-            <div className="bg-[var(--app-bg)] px-3 py-6 sm:px-6 sm:py-10">
-              {active.generated ? (
-                <ChannelPreview
-                  artifact={active}
-                  githubDisplay={githubDisplay}
-                  authorName={authorForKind(active.id)}
-                  authorTitle={titleForKind(active.id)}
-                />
-              ) : (
-                <ChannelPreview
-                  artifact={active}
-                  githubDisplay={githubDisplay}
-                  authorName={authorForKind(active.id)}
-                  authorTitle={titleForKind(active.id)}
-                  initialFallback={active.body}
-                />
+            <div className="grid gap-4 px-5 py-5 sm:px-6 sm:py-6">
+              {active.imageDataUrl && (
+                <div className="overflow-hidden rounded-xl border border-[var(--app-line)]">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={active.imageDataUrl}
+                    alt={`${active.label} generated image`}
+                    className="block w-full"
+                  />
+                </div>
               )}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-[var(--app-line)] px-4 py-2.5 font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-              <span>Source · {githubDisplay}</span>
-              <span className="text-[var(--app-line)]">·</span>
-              <span>Mood · {sourceConfig.mood === "default" ? "default" : sourceConfig.mood}</span>
-              <span className="text-[var(--app-line)]">·</span>
-              <span>Voice · {writtenSamples.length} sample{writtenSamples.length === 1 ? "" : "s"}</span>
-              <span className="text-[var(--app-line)]">·</span>
-              <span>Length · {active.metric}</span>
+              <p className="whitespace-pre-wrap font-serif text-[1.05rem] leading-[1.45] text-[var(--app-ink)] sm:text-[1.15rem]">
+                {active.body}
+              </p>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-[var(--app-line)] pt-3 font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                <span>Source · week 32</span>
+                <span className="text-[var(--app-line)]">·</span>
+                <span>Voice · {active.tone.toLowerCase()}</span>
+                <span className="text-[var(--app-line)]">·</span>
+                <span>Length · {active.metric}</span>
+                {context && context.sourceCount > 0 && (
+                  <>
+                    <span className="text-[var(--app-line)]">·</span>
+                    <span>Context · {context.sourceCount} source{context.sourceCount === 1 ? "" : "s"}</span>
+                  </>
+                )}
+              </div>
             </div>
           </article>
 
@@ -640,7 +943,7 @@ export default function AppHome() {
                 </svg>
               </span>
               <p className="text-[11.5px] leading-snug text-[var(--app-muted)]">
-                Drop a new voice note, paste a doc, or regenerate any single draft without rerunning the week.
+                Drop a new voice note, paste a doc, connect a Discord or Slack channel, or regenerate any single draft without rerunning the week.
               </p>
             </div>
             <Link
@@ -652,98 +955,233 @@ export default function AppHome() {
           </div>
         </section>
       </div>
-    </main>
-  );
-}
 
-function authorForKind(kind: ArtifactKind): string {
-  if (kind === "newsletter") return "Multimail Team";
-  if (kind === "linkedin") return "M. Kapoor";
-  return "polar-relay";
-}
+      {composer && (
+        <div
+          className="fixed inset-0 z-30 grid place-items-center bg-black/30 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Add ${composer.kind === "connector" ? MODALITY_META[composer.modality].label : MODALITY_META[composer.modality].label} source`}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) closeComposer();
+          }}
+        >
+          <div className="flex w-full max-w-lg flex-col gap-4 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-5 shadow-[0_30px_80px_-30px_rgba(15,23,42,0.4)]">
+            <div className="flex items-center justify-between">
+              <h3 className="font-serif text-[1.15rem] font-medium tracking-[-0.01em] text-[var(--app-ink)]">
+                Add {composer.kind === "connector" ? MODALITY_META[composer.modality].label : MODALITY_META[composer.modality].label}
+              </h3>
+              <button
+                type="button"
+                onClick={closeComposer}
+                className="grid h-7 w-7 place-items-center rounded-full text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)] hover:text-[var(--app-ink)]"
+                aria-label="Close"
+              >
+                <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 3l10 10M13 3L3 13" />
+                </svg>
+              </button>
+            </div>
 
-function titleForKind(kind: ArtifactKind): string {
-  if (kind === "newsletter") return "Polar Relay · weekly";
-  if (kind === "linkedin") return "Founder · Polar Relay · weekly build notes";
-  return "· engineering at Polar Relay";
-}
+            {composer.kind === "connector" ? (
+              <>
+                <p className="text-[11.5px] leading-snug text-[var(--app-muted)]">
+                  {MODALITY_META[composer.modality].help}
+                </p>
+                <label className="flex flex-col gap-1.5">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                    Label
+                  </span>
+                  <input
+                    value={composer.draft.label}
+                    onChange={(event) =>
+                      setComposer((prev) =>
+                        prev && prev.kind === "connector"
+                          ? { ...prev, draft: { ...prev.draft, label: event.target.value } }
+                          : prev,
+                      )
+                    }
+                    placeholder={
+                      composer.draft.modality === "discord"
+                        ? "Discord · #shipping"
+                        : "Slack · #eng-weekly"
+                    }
+                    className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 text-[13px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                    {composer.draft.modality === "discord" ? "Bot token" : "Bot token (xoxb-…)"}
+                  </span>
+                  <input
+                    type="password"
+                    value={composer.draft.token}
+                    onChange={(event) =>
+                      setComposer((prev) =>
+                        prev && prev.kind === "connector"
+                          ? { ...prev, draft: { ...prev.draft, token: event.target.value } }
+                          : prev,
+                      )
+                    }
+                    placeholder={composer.draft.modality === "discord" ? "MTI0NTY3…" : "xoxb-…"}
+                    autoComplete="off"
+                    className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 font-mono text-[12.5px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                    Channel id
+                  </span>
+                  <input
+                    value={composer.draft.channelId}
+                    onChange={(event) =>
+                      setComposer((prev) =>
+                        prev && prev.kind === "connector"
+                          ? { ...prev, draft: { ...prev.draft, channelId: event.target.value } }
+                          : prev,
+                      )
+                    }
+                    placeholder={composer.draft.modality === "discord" ? "123456789012345678" : "C0123ABCD"}
+                    className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 font-mono text-[12.5px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
+                  />
+                </label>
+                {composer.draft.modality === "slack" && (
+                  <label className="flex flex-col gap-1.5">
+                    <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                      Workspace <span className="text-[var(--app-muted)]/70 normal-case tracking-normal">(optional)</span>
+                    </span>
+                    <input
+                      value={composer.draft.workspace ?? ""}
+                      onChange={(event) =>
+                        setComposer((prev) =>
+                          prev && prev.kind === "connector"
+                            ? { ...prev, draft: { ...prev.draft, workspace: event.target.value } }
+                            : prev,
+                        )
+                      }
+                      placeholder="acme-co"
+                      className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 text-[13px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
+                    />
+                  </label>
+                )}
+                <label className="flex flex-col gap-1.5">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                    Messages to pull
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    value={composer.draft.limit}
+                    onChange={(event) =>
+                      setComposer((prev) =>
+                        prev && prev.kind === "connector"
+                          ? {
+                              ...prev,
+                              draft: {
+                                ...prev.draft,
+                                limit: Math.max(1, Math.min(200, Number(event.target.value) || 1)),
+                              },
+                            }
+                          : prev,
+                      )
+                    }
+                    className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 font-mono text-[12.5px] text-[var(--app-ink)] outline-none transition-colors focus:border-[var(--app-ink)]"
+                  />
+                </label>
+              </>
+            ) : (
+              <>
+                <label className="flex flex-col gap-1.5">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                    Label
+                  </span>
+                  <input
+                    value={composer.label}
+                    onChange={(event) => setComposer({ ...composer, label: event.target.value })}
+                    placeholder={composer.modality === "text" ? "Brief, kickoff notes, sponsor email…" : "Voice memo, demo recording…"}
+                    className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 text-[13px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
+                  />
+                </label>
 
-function ChannelPreview({
-  artifact,
-  initialFallback,
-  authorName,
-  authorTitle,
-  githubDisplay,
-}: {
-  artifact: Artifact;
-  initialFallback?: string;
-  authorName?: string;
-  authorTitle?: string;
-  githubDisplay?: string;
-}) {
-  const body = artifact.generated ? artifact.body : initialFallback ?? artifact.body;
-  if (artifact.id === "newsletter") {
-    return (
-      <div className="mx-auto max-w-2xl">
-        <NewsletterPreview body={body} author={authorName} week={githubDisplay} />
-        {!artifact.generated && (
-          <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-            Source-only fallback · run the week to generate a draft
-          </p>
-        )}
-        {artifact.imageDataUrl && (
-          <div className="mx-auto mt-4 max-w-2xl overflow-hidden rounded-xl border border-[var(--app-line)]">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={artifact.imageDataUrl}
-              alt={`${artifact.label} generated image`}
-              className="block w-full"
-            />
+                {composer.modality === "text" ? (
+                  <label className="flex flex-col gap-1.5">
+                    <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                      Text
+                    </span>
+                    <textarea
+                      value={composer.text}
+                      onChange={(event) => setComposer({ ...composer, text: event.target.value })}
+                      placeholder={MODALITY_META.text.placeholder}
+                      rows={8}
+                      className="resize-y rounded-xl border border-[var(--app-line)] bg-transparent p-3 text-[13px] leading-relaxed text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
+                    />
+                  </label>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                      File
+                    </span>
+                    <button
+                      type="button"
+                      onClick={triggerFilePicker}
+                      className="flex flex-col items-start gap-1 rounded-xl border border-dashed border-[var(--app-line)] bg-[var(--app-soft)]/60 px-4 py-5 text-left transition-colors hover:border-[var(--app-ink)]"
+                    >
+                      <span className="text-[13px] font-medium text-[var(--app-ink)]">
+                        {pendingFile ? pendingFile.file.name : MODALITY_META[composer.modality].placeholder}
+                      </span>
+                      <span className="text-[11px] text-[var(--app-muted)]">
+                        {pendingFile
+                          ? `${formatBytes(pendingFile.file.size)} · ${pendingFile.file.type || "unknown"}`
+                          : "Click to pick a file from your computer"}
+                      </span>
+                    </button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept={MODALITY_META[composer.modality].accept}
+                      className="hidden"
+                      onChange={(event) => handleFile(event.target.files?.[0] ?? null)}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+
+            {feedback && (
+              <p
+                className={
+                  "text-[11.5px] " +
+                  (feedback === "added" ? "text-[var(--positive)]" : "text-[#c23a2b]")
+                }
+              >
+                {feedback === "added" ? "Added to your sources." : feedback}
+              </p>
+            )}
+
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeComposer}
+                className="inline-flex h-9 items-center justify-center rounded-full border border-[var(--app-line)] px-4 text-[12px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitComposer}
+                disabled={adding}
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-full bg-[var(--app-ink)] px-4 text-[12px] font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px disabled:opacity-50"
+              >
+                {adding ? "Connecting…" : composer.kind === "connector" ? "Connect" : "Ingest"}
+                <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M3 8h10M9 4l4 4-4 4" />
+                </svg>
+              </button>
+            </div>
           </div>
-        )}
-      </div>
-    );
-  }
-  if (artifact.id === "linkedin") {
-    return (
-      <div className="mx-auto max-w-xl">
-        <LinkedInPreview body={body} authorName={authorName} authorTitle={authorTitle} />
-        {!artifact.generated && (
-          <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-            Source-only fallback · run the week to generate a draft
-          </p>
-        )}
-        {artifact.imageDataUrl && (
-          <div className="mx-auto mt-4 max-w-xl overflow-hidden rounded-xl border border-[var(--app-line)]">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={artifact.imageDataUrl}
-              alt={`${artifact.label} generated image`}
-              className="block w-full"
-            />
-          </div>
-        )}
-      </div>
-    );
-  }
-  return (
-    <div className="mx-auto max-w-lg">
-      <XPreview body={body} authorName={authorName} authorHandle="polar_relay" />
-      {!artifact.generated && (
-        <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-          Source-only fallback · run the week to generate a draft
-        </p>
-      )}
-      {artifact.imageDataUrl && (
-        <div className="mx-auto mt-4 max-w-lg overflow-hidden rounded-xl border border-[var(--app-line)]">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={artifact.imageDataUrl}
-            alt={`${artifact.label} generated image`}
-            className="block w-full"
-          />
         </div>
       )}
-    </div>
+    </main>
   );
 }
