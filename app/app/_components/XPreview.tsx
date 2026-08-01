@@ -9,19 +9,34 @@ type Props = {
 export function XPreview({ body, authorName, authorHandle }: Props) {
   const trimmed = body.trim();
   const charCount = trimmed.length;
+  const overLimit = charCount > 280;
+
   return (
-    <div className="overflow-hidden rounded-xl border border-black/10 bg-black text-[#e7e9ea] shadow-[0_24px_60px_-44px_rgba(0,0,0,0.6)]">
-      <div className="border-b border-[#2f3336] bg-black px-4 py-2">
-        <div className="flex items-center justify-between font-mono text-[10.5px] uppercase tracking-[0.16em] text-[#71767b]">
-          <span>X · Post</span>
-          <span>{charCount} / 280</span>
+    <div className="w-[560px] max-w-full overflow-hidden rounded-xl border border-black/10 bg-black text-[#e7e9ea] shadow-[0_24px_60px_-44px_rgba(0,0,0,0.6)]">
+      <div className="flex items-center justify-between border-b border-white/[0.08] bg-black px-4 py-2.5">
+        <div className="flex items-center gap-2">
+          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 text-white" fill="currentColor" aria-hidden>
+            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+          </svg>
+          <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-[#71767b]">
+            X post preview
+          </span>
         </div>
+        <span
+          className={
+            "font-mono text-[10.5px] " +
+            (overLimit ? "text-red-400" : "text-[#71767b]")
+          }
+        >
+          {charCount} / 280
+        </span>
       </div>
-      <article className="px-4 py-3 sm:px-5 sm:py-4">
+
+      <article className="px-4 py-3">
         <header className="flex items-start gap-3">
           <div
             aria-hidden
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#1d9bf0] to-[#0a2540] font-serif text-base font-semibold text-white"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#1d9bf0] to-[#0a2540] text-[14px] font-semibold text-white"
           >
             {initials(authorName ?? "MM")}
           </div>
@@ -103,10 +118,26 @@ function Action({
     view: "M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5zm7 1a2 2 0 1 0 0-4 2 2 0 0 0 0 4z",
     share: "M2 8l12-6-4 14-3-6-5-2z",
   };
-  const color = active ? "text-[#f91880]" : icon === "repost" ? "text-[#00ba7c]" : "text-[#71767b]";
+  const color = active
+    ? "text-[#f91880]"
+    : icon === "repost"
+      ? "text-[#00ba7c]"
+      : "text-[#71767b]";
   return (
-    <button type="button" className={`group flex items-center gap-1 rounded-full px-2 py-1 text-[12px] transition-colors hover:bg-white/5 ${color}`}>
-      <svg viewBox="0 0 16 16" className="h-[18px] w-[18px]" fill={active && icon === "like" ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <button
+      type="button"
+      className={"group flex items-center gap-1 rounded-full px-2 py-1 text-[12px] transition-colors hover:bg-white/5 " + color}
+    >
+      <svg
+        viewBox="0 0 16 16"
+        className="h-[18px] w-[18px]"
+        fill={active && icon === "like" ? "currentColor" : "none"}
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden
+      >
         <path d={d[icon]} />
       </svg>
       {count ? <span>{count}</span> : null}

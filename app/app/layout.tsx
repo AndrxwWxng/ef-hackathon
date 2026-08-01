@@ -12,11 +12,7 @@ export default function AppLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <div className="app-scope min-h-full bg-[var(--app-bg)] text-[var(--app-ink)]">
-      <div
-        aria-hidden
-        className="pointer-events-none fixed inset-0 -z-10 [background-image:linear-gradient(to_right,var(--app-grid)_1px,transparent_1px),linear-gradient(to_bottom,var(--app-grid)_1px,transparent_1px)] [background-size:56px_56px] [mask-image:radial-gradient(ellipse_at_top,black_45%,transparent_78%)]"
-      />
+    <div className="app-scope h-full overflow-hidden bg-[var(--app-bg)] text-[var(--app-ink)]">
       {children}
     </div>
   );
