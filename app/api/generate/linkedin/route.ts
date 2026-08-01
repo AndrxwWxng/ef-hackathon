@@ -41,6 +41,9 @@ export async function POST(req: Request) {
         shape: history.data.shape,
         structure: history.data.structure,
         narrative: history.data.narrative,
+        deep: history.data.deep,
+        github: history.data.github,
+        comprehension: history.data.comprehension,
       }),
     );
     const { text, screenshots } = await runLinkedInAgent({

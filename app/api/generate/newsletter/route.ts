@@ -41,6 +41,9 @@ export async function POST(req: Request) {
         shape: history.data.shape,
         structure: history.data.structure,
         narrative: history.data.narrative,
+        deep: history.data.deep,
+        github: history.data.github,
+        comprehension: history.data.comprehension,
       }),
     );
     const { text, screenshots } = await runNewsletterAgent({
@@ -53,6 +56,12 @@ export async function POST(req: Request) {
       text,
       source: source.week,
       screenshots: screenshots ?? undefined,
+      grounding: {
+        commitsRead: history.data.comprehension?.commitUnderstandings.length ?? 0,
+        deepRead: history.data.deep !== null,
+        github: history.data.github !== null,
+        warnings: history.warnings,
+      },
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";

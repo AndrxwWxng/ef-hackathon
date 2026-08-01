@@ -2,7 +2,12 @@ import { NextResponse } from "next/server";
 
 import { generateRepoHistory, projectToWeeklySource, RepoHistoryError } from "@/lib/repo-history/public";
 import { ingestSource, type IngestInput } from "@/lib/multimodal";
-import { addSource, summarizeForStorage } from "@/lib/multimodal/store";
+import {
+  addSource,
+  getCredential,
+  summarizeForStorage,
+  type StoredSource,
+} from "@/lib/multimodal/store";
 import { generateTextDraft, generateImage, imagePromptForSource } from "@/lib/openai";
 import { type WeeklySource } from "@/lib/weekly-source";
 
@@ -52,7 +57,12 @@ const STAGE_DEFS: { id: string; group: Stage["group"]; label: string }[] = [
   { id: "pull.shape", group: "pull", label: "Collect counts" },
   { id: "pull.structure", group: "pull", label: "Read repo structure" },
   { id: "pull.narrative", group: "pull", label: "Capture commits" },
+  { id: "pull.deep", group: "pull", label: "Read diffs and source files" },
+  { id: "pull.github", group: "pull", label: "Fetch PRs and issues" },
+  { id: "pull.comprehend", group: "pull", label: "Understand the changes" },
   { id: "pull.synthesize", group: "pull", label: "Synthesize analysis" },
+  { id: "pull.discord", group: "pull", label: "Refresh Discord channels" },
+  { id: "pull.slack", group: "pull", label: "Refresh Slack channels" },
   { id: "ingest.normalize", group: "ingest", label: "Normalize analysis" },
   { id: "ingest.extract", group: "ingest", label: "Extract themes" },
   { id: "ingest.summarize", group: "ingest", label: "Summarize context" },
@@ -167,9 +177,17 @@ export async function POST(req: Request): Promise<Response> {
           "pull.shape",
           "pull.structure",
           "pull.narrative",
+          "pull.deep",
+          "pull.github",
+          "pull.comprehend",
           "pull.synthesize",
         ]) {
           updateStage(id, { status: "done" });
+        }
+
+        for (const warning of history.warnings) {
+          write({ type: "error", message: warning, group: "pull", recoverable: true });
+          log(`warning: ${warning}`);
         }
 
         const analysisText = history.analysis;
@@ -207,15 +225,33 @@ export async function POST(req: Request): Promise<Response> {
 
         updateStage("ingest.store", { status: "running" });
         const stored = summarizeForStorage(ingestResult);
-        const storedSources = await addSource(stored);
+        let storedSources = await addSource(stored);
         updateStage("ingest.store", { status: "done", detail: `${storedSources.length} source${storedSources.length === 1 ? "" : "s"}` });
         write({ type: "source", id: stored.id, label: stored.label });
+
+        storedSources = await refreshConnectorSources({
+          kind: "discord",
+          sources: storedSources,
+          updateStage,
+          write,
+          log: (line) => write({ type: "log", group: "pull", line }),
+        });
+        storedSources = await refreshConnectorSources({
+          kind: "slack",
+          sources: storedSources,
+          updateStage,
+          write,
+          log: (line) => write({ type: "log", group: "pull", line }),
+        });
 
         const weeklySource: WeeklySource = projectToWeeklySource({
           meta: history.meta,
           shape: history.data.shape,
           structure: history.data.structure,
           narrative: history.data.narrative,
+          deep: history.data.deep,
+          github: history.data.github,
+          comprehension: history.data.comprehension,
         });
 
         for (const kind of targets) {
@@ -314,6 +350,9 @@ async function runPullPhases(args: {
   updateStage("pull.shape", { status: "running" });
   updateStage("pull.structure", { status: "running" });
   updateStage("pull.narrative", { status: "running" });
+  updateStage("pull.deep", { status: "running" });
+  updateStage("pull.github", { status: "running" });
+  updateStage("pull.comprehend", { status: "running" });
 
   const result = await generateRepoHistory({
     repoUrl: args.repoUrl,
@@ -335,6 +374,18 @@ async function runPullPhases(args: {
   updateStage("pull.shape", { status: "done", detail: detailFor("shape", "ok") });
   updateStage("pull.structure", { status: "done", detail: detailFor("structure", "ok") });
   updateStage("pull.narrative", { status: "done", detail: detailFor("narrative", "ok") });
+  updateStage("pull.deep", {
+    status: result.data.deep ? "done" : "error",
+    detail: detailFor("deep", "skipped"),
+  });
+  updateStage("pull.github", {
+    status: result.data.github ? "done" : "error",
+    detail: detailFor("github", "skipped or not a GitHub repo"),
+  });
+  updateStage("pull.comprehend", {
+    status: result.data.comprehension ? "done" : "error",
+    detail: detailFor("comprehend", "skipped; drafts fall back to heuristics"),
+  });
 
   updateStage("pull.synthesize", { status: "running" });
   const analysis = await readAnalysis(result.artifacts.analysis);
@@ -353,4 +404,109 @@ async function readAnalysis(filePath: string): Promise<string> {
   } catch {
     return "";
   }
+}
+
+type RefreshConnectorArgs = {
+  kind: "discord" | "slack";
+  sources: StoredSource[];
+  updateStage: (id: string, patch: Partial<Stage>) => void;
+  write: (event: RunEvent) => void;
+  log: (line: string) => void;
+};
+
+async function refreshConnectorSources(args: RefreshConnectorArgs): Promise<StoredSource[]> {
+  const { kind, sources, updateStage, write, log } = args;
+  const stageId = kind === "discord" ? "pull.discord" : "pull.slack";
+  const targets = sources.filter((source) => source.connector?.kind === kind);
+  if (targets.length === 0) {
+    updateStage(stageId, { status: "done", detail: "no channels connected" });
+    log(`${kind}: no channels connected`);
+    return sources;
+  }
+  updateStage(stageId, {
+    status: "running",
+    detail: `${targets.length} channel${targets.length === 1 ? "" : "s"}`,
+  });
+  log(`${kind}: refreshing ${targets.length} channel${targets.length === 1 ? "" : "s"}`);
+
+  let ok = 0;
+  let failed = 0;
+  const refreshed = [...sources];
+
+  await Promise.all(
+    targets.map(async (source) => {
+      const channelLabel = source.connector?.channelName
+        ? `#${source.connector.channelName}`
+        : source.connector?.channelId ?? source.label;
+      try {
+        const credential = await getCredential(source.id);
+        if (!credential) {
+          log(`${kind}: ${channelLabel} skipped (no saved token)`);
+          failed += 1;
+          return;
+        }
+        const channelId = source.connector?.channelId ?? source.origin;
+        if (!channelId) {
+          log(`${kind}: ${channelLabel} skipped (missing channel id)`);
+          failed += 1;
+          return;
+        }
+        const input: IngestInput =
+          kind === "discord"
+            ? {
+                modality: "discord",
+                label: source.label,
+                token: credential.token,
+                channelId,
+                limit: 50,
+                origin: channelId,
+              }
+            : {
+                modality: "slack",
+                label: source.label,
+                token: credential.token,
+                channelId,
+                workspace: credential.workspace ?? source.connector?.workspace,
+                limit: 50,
+                origin: channelId,
+              };
+        const result = await ingestSource(input, {
+          onLog: () => undefined,
+          onStep: () => undefined,
+        });
+        result.id = source.id;
+        result.source.id = source.id;
+        const stored = summarizeForStorage(result);
+        const next = await addSource(stored);
+        const idx = refreshed.findIndex((item) => item.id === source.id);
+        if (idx >= 0) refreshed[idx] = stored;
+        else refreshed.unshift(stored);
+        const merged = next;
+        for (let i = 0; i < refreshed.length; i += 1) {
+          const match = merged.find((item) => item.id === refreshed[i].id);
+          if (match) refreshed[i] = match;
+        }
+        const msgs = stored.connector?.lastMessageCount ?? 0;
+        ok += 1;
+        log(`${kind}: ${channelLabel} ✓ (${msgs} msgs)`);
+        write({ type: "source", id: source.id, label: stored.label });
+      } catch (err) {
+        failed += 1;
+        const message = err instanceof Error ? err.message : String(err);
+        log(`${kind}: ${channelLabel} ✗ ${message}`);
+      }
+    }),
+  );
+
+  const detail = `${ok}/${targets.length} refreshed${failed ? ` · ${failed} failed` : ""}`;
+  updateStage(stageId, { status: failed === targets.length ? "error" : "done", detail });
+  if (failed === targets.length && ok === 0) {
+    write({
+      type: "error",
+      message: `${kind} refresh failed for every channel (${failed}/${targets.length}). Drafts will skip the latest channel activity.`,
+      group: "pull",
+      recoverable: true,
+    });
+  }
+  return refreshed;
 }

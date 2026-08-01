@@ -4,7 +4,7 @@ import { Agent, run, tool, type AgentOutputType, type RunResult } from "@openai/
 import { z } from "zod";
 
 import { generateRepoShots, VIEWPORT_PRESETS, THEMES } from "./repo-shot";
-import { buildSourceContext } from "./openai";
+import { buildSourceContext, GROUNDING_RULES } from "./openai";
 import type { WeeklySource } from "./weekly-source";
 
 export const AGENT_MODEL = "gpt-5.6";
@@ -128,6 +128,7 @@ const SHARED_RULES = [
   "You only use information present in the supplied source data.",
   "You never invent partner names, metrics, or testimonials.",
   "You avoid em dashes; use hyphens, colons, or rewrite instead.",
+  GROUNDING_RULES,
   "If the source includes an `App repo (screenshottable)` URL, you MUST call `take_screenshots` at least once before producing the draft, choosing routes that show the most relevant shipped work (the home page is always a safe default).",
   "Do not describe the screenshots in the draft unless they make the post more useful. Reference the visual only when it adds concrete value (e.g. 'the new digest view on mobile').",
   "Return ONLY the draft text, no preamble, no labels, no surrounding quotes.",

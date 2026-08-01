@@ -6,12 +6,19 @@ export type RunGitOptions = {
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
   input?: string;
+  /**
+   * Hard cap on captured stdout. Once exceeded the child is killed and the
+   * result is flagged `truncated`. Used by the patch reader, where output size
+   * is unbounded in principle.
+   */
+  maxBytes?: number;
 };
 
 export type RunGitResult = {
   stdout: string;
   stderr: string;
   exitCode: number;
+  truncated: boolean;
 };
 
 const GIT_BIN = process.env.GIT_BIN ?? "git";
@@ -42,6 +49,8 @@ export async function runGit(
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let truncated = false;
+    const maxBytes = options.maxBytes ?? Infinity;
 
     const timer = setTimeout(() => {
       timedOut = true;
@@ -51,7 +60,13 @@ export async function runGit(
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
+      if (truncated) return;
       stdout += chunk;
+      if (stdout.length > maxBytes) {
+        stdout = stdout.slice(0, maxBytes);
+        truncated = true;
+        child.kill();
+      }
     });
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
@@ -74,7 +89,7 @@ export async function runGit(
         reject(new Error(`git ${args.join(" ")} timed out after ${timeoutMs}ms in ${options.cwd}`));
         return;
       }
-      resolve({ stdout, stderr, exitCode: code ?? 0 });
+      resolve({ stdout, stderr, exitCode: truncated ? 0 : code ?? 0, truncated });
     });
   });
 }

@@ -7,6 +7,15 @@ export type RepoHistoryInput = {
   windowAnchor?: WindowAnchor;
   outDir?: string;
   onLog?: (line: string) => void;
+  /** Read patches, key files, and docs. Default true. */
+  deepRead?: boolean;
+  /** Pull PR/issue/release prose from the GitHub API. Default true. */
+  useGitHub?: boolean;
+  /**
+   * Run the LLM comprehension pass over the deep read. Default true, but
+   * automatically skipped when OPENAI_KEY is missing or deepRead is off.
+   */
+  comprehend?: boolean;
 };
 
 export type RepoHistoryOptions = {
@@ -14,6 +23,8 @@ export type RepoHistoryOptions = {
   fetchTimeoutMs?: number;
   exclude?: string[];
   maxLogs?: number;
+  deepLimits?: Partial<import("./phase4").Phase4Limits>;
+  comprehendBatchSize?: number;
 };
 
 export type RepoHistoryMeta = {
@@ -40,8 +51,16 @@ export type RepoHistoryArtifacts = {
   phase1: string;
   phase2: string;
   phase3: string;
+  /** Patches, key file contents, docs, routes. Written when deepRead ran. */
+  phase4?: string;
+  /** PR/issue/release prose. Written when the GitHub fetch ran. */
+  github?: string;
+  /** The comprehension digest. Written when the LLM pass ran. */
+  digest?: string;
   analysis: string;
 };
+
+export type PhaseTiming = { ms: number; detail: string };
 
 export type RepoHistoryResult = {
   meta: RepoHistoryMeta;
@@ -50,19 +69,27 @@ export type RepoHistoryResult = {
     shape: import("./phase1").Phase1Shape;
     structure: import("./phase2").Phase2Structure;
     narrative: import("./phase3").Phase3Narrative;
+    deep: import("./phase4").Phase4Deep | null;
+    github: import("./github").GitHubContext | null;
+    comprehension: import("./comprehend").ComprehensionResult | null;
   };
   phases: {
-    clone: { ms: number; detail: string };
-    shape: { ms: number; detail: string };
-    structure: { ms: number; detail: string };
-    narrative: { ms: number; detail: string };
-    synthesize: { ms: number; detail: string };
+    clone: PhaseTiming;
+    shape: PhaseTiming;
+    structure: PhaseTiming;
+    narrative: PhaseTiming;
+    deep?: PhaseTiming;
+    github?: PhaseTiming;
+    comprehend?: PhaseTiming;
+    synthesize: PhaseTiming;
   };
+  /** Non-fatal degradations, e.g. GitHub unreachable or comprehension skipped. */
+  warnings: string[];
   logs: string[];
 };
 
 export class RepoHistoryError extends Error {
-  stage: keyof RepoHistoryResult["phases"] | "init";
+  stage: keyof RepoHistoryResult["phases"] | "init" | "deep" | "github" | "comprehend";
   cause?: unknown;
   logs: string[];
 

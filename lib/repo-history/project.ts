@@ -1,10 +1,14 @@
+import type { ComprehensionResult } from "./comprehend";
+import type { GitHubContext } from "./github";
 import type { Phase1Shape } from "./phase1";
 import type { Phase2Structure } from "./phase2";
 import type { Phase3Narrative } from "./phase3";
 import type { CommitEntry } from "./phase3";
+import type { Phase4Deep } from "./phase4";
 import type { RepoHistoryMeta } from "./types";
 import type {
   Commit,
+  DigestChange,
   FeatureItem,
   PullRequest,
   WhatChangedBeat,
@@ -89,32 +93,27 @@ function buildFeatureFromCommit(commit: CommitEntry): FeatureItem | null {
   };
 }
 
+/**
+ * Fallback path only, used when the comprehension pass did not run.
+ *
+ * This deliberately says less than it used to. The previous version matched the
+ * commit subject against a lookup table and returned confident product claims
+ * ("so users can pull content from where they already work") that were written
+ * for one specific repo and emitted for every repo. Stating the observable
+ * facts and nothing more is worse copy but true copy, and the writer downstream
+ * is told to treat it as thin evidence.
+ */
 function buildWhy(commit: CommitEntry, subject: string, area: string): string {
-  const audienceFrame = (s: string): string => {
-    if (/integrat|integrations?\b/i.test(s)) {
-      return `Brings ${matchGroup(s, /(\w[\w-]*\b)/) ?? "a new"} source into the product so users can pull content from where they already work.`;
-    }
-    if (/\bui\b|layout|landing|page|styling|design|preview|render/i.test(s)) {
-      return `Improves how the app looks and feels for the people using it - ${area} work that lands the message faster.`;
-    }
-    if (/screenshot|sandbox|shot|capture/i.test(s)) {
-      return `Lets the team see the actual output of the product, not just the code, so reviews stop being guesswork.`;
-    }
-    if (/\bhistory|repo|git\b|pull\b/i.test(s)) {
-      return `Lets the team ingest a real codebase and turn it into a weekly update without manual copy-paste.`;
-    }
-    if (/\bimage|tool|agent|sdk\b/i.test(s)) {
-      return `Expands what the assistant can do so it produces richer, more visual drafts without hand-holding.`;
-    }
-    return `Real, user-visible progress in ${area}: ${subject.toLowerCase()}.`;
-  };
-
-  return audienceFrame(subject);
-}
-
-function matchGroup(s: string, re: RegExp): string | undefined {
-  const m = s.match(re);
-  return m?.[1];
+  const touched = commit.numstat.length;
+  const added = commit.numstat.reduce((sum, r) => sum + (r.added ?? 0), 0);
+  const deleted = commit.numstat.reduce((sum, r) => sum + (r.deleted ?? 0), 0);
+  if (touched === 0) {
+    return `Recorded as "${subject}". No tracked file changes were captured, so the effect is not established.`;
+  }
+  return (
+    `Recorded as "${subject}" in ${area}: ${touched} file${touched === 1 ? "" : "s"} changed ` +
+    `(+${added}/-${deleted}). Effect on users not established without reading the diff.`
+  );
 }
 
 function toTitleCase(s: string): string {
@@ -200,7 +199,13 @@ function buildContributorSummary(shape: Phase1Shape): string {
   return top.join(", ");
 }
 
-function buildStackHint(structure: Phase2Structure): string | undefined {
+function buildStackHint(
+  structure: Phase2Structure,
+  comprehension?: ComprehensionResult | null,
+): string | undefined {
+  if (comprehension && comprehension.digest.project.stack.length > 0) {
+    return comprehension.digest.project.stack.join(", ");
+  }
   const hints: string[] = [];
   const flat = (structure.treeDepth2 ?? []).join(" ").toLowerCase();
   const manifest = (structure.manifestsPresent ?? []).join(" ").toLowerCase();
@@ -226,9 +231,9 @@ function buildWhatChanged(
     const headline = features[0];
     beats.push({
       heading: "What we shipped",
-      body: `${headline.title}. ${headline.why} ${
+      body: `${headline.title}. ${headline.why}${
         features.length > 1
-          ? `Across the week we also landed ${features.length - 1} more user-visible improvements.`
+          ? ` ${features.length - 1} other change${features.length - 1 === 1 ? "" : "s"} landed in the same window.`
           : ""
       }`.trim(),
     });
@@ -237,29 +242,80 @@ function buildWhatChanged(
   if (topArea) {
     beats.push({
       heading: "Where the work happened",
-      body: `Most of the activity landed in ${topArea}, which is where users see the product or where the team's automation runs.`,
+      body: `Most of the changed files this window sit under ${topArea}.`,
     });
   }
 
   if (shape.contributors.length > 1) {
     beats.push({
       heading: "Who did the work",
-      body: `${shape.contributors.length} people contributed this window. ${buildContributorSummary(shape)}.`,
+      body: `${shape.contributors.length} author identities contributed this window: ${buildContributorSummary(shape)}.`,
     });
   } else if (shape.contributors.length === 1) {
     const only = shape.contributors[0];
     beats.push({
       heading: "Who did the work",
-      body: `${only.name} carried the window solo this time.`,
+      body: `${only.name} authored all ${only.count} commits in this window.`,
     });
   }
 
+  // No forward-looking beat here. The previous version emitted a fixed
+  // paragraph promising "multi-channel previews" next, which was a roadmap
+  // claim invented by the tool. When comprehension runs, `inProgress` supplies
+  // a real one grounded in unfinished code.
+  return beats;
+}
+
+function changeToFeatureItem(change: DigestChange): FeatureItem {
+  const why = change.whyItMatters || change.whatChanged;
+  return {
+    title: change.title,
+    why: change.confidence === "low" ? `${why} (low confidence)` : why,
+    area: change.audience,
+    evidence: change.evidence.length ? change.evidence : undefined,
+  };
+}
+
+/**
+ * Beats built from what the model actually read, replacing the heuristic ones.
+ */
+function digestToWhatChanged(
+  comprehension: ComprehensionResult,
+  shape: Phase1Shape,
+): WhatChangedBeat[] {
+  const { digest } = comprehension;
+  const beats: WhatChangedBeat[] = [];
+
   beats.push({
-    heading: "What this means for partners",
-    body: features.length > 0
-      ? `The product is moving in the direction of being self-updating: more sources, more channels, less manual polish. Expect the next update to lean into multi-channel previews.`
-      : `Quiet window in the diff, but the scaffolding for richer ingestion is in place. Next update should show a real feature landing.`,
+    heading: "What we shipped",
+    body: `${digest.window.headline}${digest.window.summary ? ` ${digest.window.summary}` : ""}`,
   });
+
+  if (digest.features.length > 0) {
+    beats.push({
+      heading: "The changes in detail",
+      body: digest.features
+        .map((f) => `${f.title}: ${f.whyItMatters || f.whatChanged}`)
+        .join(" "),
+    });
+  }
+
+  if (shape.contributors.length > 0) {
+    beats.push({
+      heading: "Who did the work",
+      body:
+        shape.contributors.length === 1
+          ? `${shape.contributors[0].name} authored all ${shape.contributors[0].count} commits in this window.`
+          : `${shape.contributors.length} author identities contributed: ${buildContributorSummary(shape)}.`,
+    });
+  }
+
+  if (digest.inProgress.length > 0) {
+    beats.push({
+      heading: "What is next",
+      body: digest.inProgress.map((item) => `${item.title} (${item.signal})`).join(" "),
+    });
+  }
 
   return beats;
 }
@@ -269,17 +325,47 @@ export function projectToWeeklySource(args: {
   shape: Phase1Shape;
   structure: Phase2Structure;
   narrative: Phase3Narrative;
+  deep?: Phase4Deep | null;
+  github?: GitHubContext | null;
+  comprehension?: ComprehensionResult | null;
 }): WeeklySource {
   const { meta, shape, structure, narrative } = args;
-  const features = buildFeatures(narrative.commits);
-  const whatChanged = buildWhatChanged(features, shape);
-  const pullRequests = buildPullRequests(narrative.commits, meta);
+  const deep = args.deep ?? null;
+  const github = args.github ?? null;
+  const comprehension = args.comprehension ?? null;
+
   const commits = buildCommits(narrative.commits, meta);
-  const stackHint = buildStackHint(structure);
+  const stackHint = buildStackHint(structure, comprehension);
+
+  // Real merged PRs when GitHub answered; otherwise the merge-commit heuristic.
+  const pullRequests =
+    github && github.pullRequests.length > 0
+      ? github.pullRequests.map((pr) => ({
+          number: pr.number,
+          repo: repoShortName(meta.repoUrl),
+          title: pr.title,
+          author: pr.author,
+          mergedAt: pr.mergedAt,
+          summary: pr.body ? pr.body.split(/\r?\n/).find((l) => l.trim()) ?? pr.title : pr.title,
+        }))
+      : buildPullRequests(narrative.commits, meta);
+
+  const features = comprehension
+    ? [...comprehension.digest.features, ...comprehension.digest.fixes].map(changeToFeatureItem)
+    : buildFeatures(narrative.commits);
+
+  const whatChanged = comprehension
+    ? digestToWhatChanged(comprehension, shape)
+    : buildWhatChanged(features, shape);
+
+  // Actual page routes, not manifest filenames. The screenshot tool reads this.
+  const routes = deep
+    ? deep.routes.filter((r) => r.kind === "page").map((r) => r.route)
+    : [];
 
   return {
     week: `${meta.windowFrom} -> ${meta.windowTo}`,
-    project: meta.repoName,
+    project: comprehension?.digest.project.name || meta.repoName,
     commits,
     pullRequests,
     voiceNotes: [],
@@ -288,6 +374,10 @@ export function projectToWeeklySource(args: {
     contributorSummary: buildContributorSummary(shape),
     stackHint,
     repoUrl: meta.repoUrl,
-    routes: structure.manifestsPresent,
+    routes,
+    digest: comprehension?.digest,
+    digestNote: comprehension
+      ? undefined
+      : "The code was not read this run; the items below come from commit subjects and file statistics only. Do not state why a change matters unless the commit text says so.",
   };
 }
