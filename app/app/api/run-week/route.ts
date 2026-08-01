@@ -8,7 +8,8 @@ import {
   summarizeForStorage,
   type StoredSource,
 } from "@/lib/multimodal/store";
-import { generateTextDraft, generateImage, imagePromptForSource } from "@/lib/openai";
+import { imagePromptForSource, generateImage } from "@/lib/openai";
+import { runAllTargets, type ScreenshotResult, type VideoResult } from "@/lib/agents";
 import { type WeeklySource } from "@/lib/weekly-source";
 
 export const runtime = "nodejs";
@@ -43,7 +44,15 @@ type RunEvent =
   | { type: "stage"; stage: Stage }
   | { type: "log"; group: Stage["group"]; line: string }
   | { type: "source"; id: string; label: string }
-  | { type: "draft"; kind: DraftKind; text: string; metric: string; imageDataUrl?: string }
+  | {
+      type: "draft";
+      kind: DraftKind;
+      text: string;
+      metric: string;
+      imageDataUrl?: string;
+      screenshots?: ScreenshotResult;
+      video?: VideoResult;
+    }
   | { type: "complete"; weeklySource: WeeklySource; sources: string[] }
   | { type: "error"; message: string; group: Stage["group"]; recoverable: boolean };
 
@@ -254,55 +263,73 @@ export async function POST(req: Request): Promise<Response> {
           comprehension: history.data.comprehension,
         });
 
+        const needsAgent = targets.includes("linkedin") || targets.includes("newsletter");
+        if (needsAgent) {
+          updateStage("generate.screenshot", { status: "running", detail: "pre-triggering in parallel with drafts" });
+          updateStage("generate.video", { status: "running", detail: "pre-triggering in parallel with drafts" });
+        }
         for (const kind of targets) {
           updateStage(`generate.${kind}`, { status: "running" });
         }
 
-        const draftResults = await Promise.all(
-          targets.map(async (kind) => {
+        const allStarted = Date.now();
+        const { drafts, screenshot, video } = await runAllTargets({
+          source: weeklySource,
+          targets: [...targets],
+          mood: body.mood,
+          writingSamples: body.writingSamples,
+        });
+
+        if (needsAgent) {
+          updateStage("generate.screenshot", {
+            status: screenshot ? "done" : "error",
+            detail: screenshot
+              ? `${screenshot.frames.length} frame${screenshot.frames.length === 1 ? "" : "s"}`
+              : "skipped or failed",
+          });
+          updateStage("generate.video", {
+            status: video ? "done" : "error",
+            detail: video ? `${video.outputPath}` : "skipped or failed",
+          });
+        }
+
+        for (const kind of targets) {
+          const draft = drafts[kind];
+          if (!draft) continue;
+          const text = draft.text;
+          let imageDataUrl: string | undefined;
+          if (kind === "linkedin" || kind === "x") {
             try {
-              const text = await generateTextDraft({
-                kind,
-                source: weeklySource,
-                mood: body.mood,
-                writingSamples: body.writingSamples,
-              });
-              let imageDataUrl: string | undefined;
-              if (kind === "linkedin" || kind === "x") {
-                const prompt = imagePromptForSource(weeklySource, kind);
-                const img = await generateImage(prompt);
-                imageDataUrl = `data:image/png;base64,${img.base64}`;
-              }
-              return { kind, text, imageDataUrl };
+              const prompt = imagePromptForSource(weeklySource, kind);
+              const img = await generateImage(prompt, { kind });
+              imageDataUrl = `data:image/png;base64,${img.base64}`;
             } catch (err) {
               const message = err instanceof Error ? err.message : String(err);
-              updateStage(`generate.${kind}`, { status: "error", detail: message });
               write({
                 type: "error",
-                message: `${kind} generation failed: ${message}`,
+                message: `${kind} image failed: ${message}`,
                 group: "generate",
                 recoverable: true,
               });
-              throw err;
             }
-          }),
-        );
-
-        for (const result of draftResults) {
-          updateStage(`generate.${result.kind}`, {
+          }
+          updateStage(`generate.${kind}`, {
             status: "done",
-            detail: approxMetric(result.kind, result.text),
+            detail: approxMetric(kind, text),
           });
           write({
             type: "draft",
-            kind: result.kind,
-            text: result.text,
-            metric: approxMetric(result.kind, result.text),
-            imageDataUrl: result.imageDataUrl,
+            kind,
+            text,
+            metric: approxMetric(kind, text),
+            imageDataUrl,
+            screenshots: screenshot ?? undefined,
+            video: video ?? undefined,
           });
         }
 
         write({ type: "complete", weeklySource, sources: storedSources.map((s) => s.id) });
+        serverLog(`run complete drafts=${targets.length} took=${Date.now() - allStarted}ms`);
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "stages", stages })}\n\n`));
         controller.close();
       } catch (err) {

@@ -646,9 +646,12 @@ export default function AppHome() {
       )}
 
       {/* Main grid */}
-      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[260px_1fr] xl:grid-cols-[280px_1fr]">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row lg:items-stretch">
         {/* Sidebar */}
-        <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-1">
+        <aside
+          className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-1"
+          style={isDesktop ? { width: `${sidebarWidth}px`, flexShrink: 0 } : undefined}
+        >
           {/* Sources */}
           <section className="flex flex-col rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)]">
             <div className="flex items-center justify-between border-b border-[var(--app-line)] px-4 py-3">
@@ -981,6 +984,21 @@ export default function AppHome() {
             </div>
           </article>
         </section>
+
+        <PipelinePanel
+          stages={stages}
+          logs={logLines}
+          running={running}
+          hasRun={hasRun}
+          error={pipelineError}
+          targets={Array.from(targets)}
+          onClear={() => {
+            setLogLines([]);
+            setStages([]);
+            setHasRun(false);
+            setPipelineError(null);
+          }}
+        />
       </div>
 
       {composer && (
