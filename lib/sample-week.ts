@@ -27,6 +27,8 @@ export type WeeklySource = {
   commits: Commit[];
   pullRequests: PullRequest[];
   voiceNotes: VoiceNote[];
+  repoUrl?: string;
+  routes?: string[];
 };
 
 export const SAMPLE_WEEK: WeeklySource = {
@@ -162,6 +164,9 @@ export function summarizeSource(source: WeeklySource): string {
   const lines: string[] = [];
   lines.push(`Week: ${source.week}`);
   lines.push(`Project: ${source.project}`);
+  if (source.repoUrl) {
+    lines.push(`App repo (screenshottable): ${source.repoUrl}`);
+  }
   lines.push("");
   lines.push(`Pull requests merged (${source.pullRequests.length}):`);
   for (const pr of source.pullRequests) {

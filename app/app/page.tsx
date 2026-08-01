@@ -363,12 +363,16 @@ export default function AppHome() {
       return;
     }
     setRunning(true);
+    setState({ status: "loading" });
+    setFeedback("");
+
     const order: ArtifactKind[] = ["newsletter", "linkedin", "x"];
     for (const target of order) {
       if (!targets.has(target)) continue;
       await generateOne(target);
     }
     setRunning(false);
+    setState({ status: "idle" });
   }
 
   function selectTab(kind: ArtifactKind) {
@@ -554,7 +558,7 @@ export default function AppHome() {
   const activeMood = MOOD_OPTIONS.find((m) => m.id === sourceConfig.mood);
 
   return (
-    <div className="mx-auto flex h-[calc(100vh-44px)] w-full max-w-[1400px] flex-col gap-4 overflow-hidden px-4 py-4 sm:px-6 lg:px-8">
+    <div className="mx-auto flex h-[calc(100vh-45px)] w-full max-w-[1600px] flex-col gap-4 overflow-hidden px-3 py-4 sm:px-5 lg:px-6">
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="flex flex-col gap-0.5">
