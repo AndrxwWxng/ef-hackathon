@@ -166,6 +166,11 @@ export function buildScreenshotTool(options: BuildScreenshotToolOptions = {}) {
 }
 
 const SHARED_RULES = [
+  "Audience: non-technical readers (sponsors, partners, and general users). They do not write code and do not follow engineering workflows. Write so a curious but non-technical person can read it end-to-end and feel informed, not lost.",
+  "Never reveal the product's plumbing. Do not mention GitHub, commits, pull requests, commit SHAs, repository paths, branches, merges, voice-note IDs, internal tags, or any other artifact of how the post was generated. To the reader, the writing should feel like a calm, human update from the team, not an automated digest of source code.",
+  "Source the writing in user-facing reality, not engineering reality. Cover only what matters to the end user or a sponsor: visible UI/visual changes, new or changed functionality, security and privacy improvements, testing/quality changes that affect reliability, and anything else that a sponsor or user would actually care about. Skip internal refactors, dependency churn, tooling changes, and other developer-only work unless they have a direct, visible user benefit (and even then, frame it in user terms).",
+  "Keep it tight and high-signal. Lead with what shipped and why it matters, not the journey. Skip filler, throat-clearing, and restating the headline. Every sentence should earn its place.",
+  "Tone: natural and effortless, never forced, breathless, hype-driven, or AI-synthesized. No generic openers ('This week was a busy one...'), no manufactured enthusiasm, no em-dash-heavy cadence. Sound like a real person who happened to write the update.",
   "You only use information present in the supplied source data.",
   "You never invent partner names, metrics, or testimonials.",
   "You avoid em dashes; use hyphens, colons, or rewrite instead.",
@@ -178,8 +183,8 @@ function buildUserPrompt(source: WeeklySource, kind: "newsletter" | "linkedin", 
   const kindLabel = kind === "linkedin" ? "LinkedIn post" : "newsletter";
   const instructions =
     kind === "linkedin"
-      ? "Write a LinkedIn post of roughly 800-1,400 characters. Open with the single most interesting shipped item in one short line, then 3-5 short paragraphs that surface the other wins without bullet-list formatting. Close with a one-sentence forward-looking line. Use minimal Markdown (line breaks, occasional **bold** for emphasis). Tone is direct and status-forward. Reference concrete items from the source. Do not invent partners, metrics, or testimonials."
-      : "Write a 350-550 word sponsor-facing newsletter. Structure: a one-line headline, a 2-sentence intro that states the headline plainly, then 3-5 short sections with bolded section headers covering the week's shipped work, a 'what is next' beat, and a closing line. Tone is calm, partner-facing, and specific. Use Markdown for structure (headings with ##, bold with **, lists with -). Reference concrete items from the source. Do not invent partners, metrics, or testimonials.";
+      ? "Write a LinkedIn post of roughly 800-1,400 characters for non-technical readers (sponsors, partners, and general users). Open with the single most interesting shipped item in one short line, then 3-5 short paragraphs that surface the other wins without bullet-list formatting. Close with a one-sentence forward-looking line. Use minimal Markdown (line breaks, occasional **bold** for emphasis). Tone is direct, calm, and status-forward - never breathless or hype-driven. Reference concrete user-facing items from the source. Do not invent partners, metrics, or testimonials, and do not reference GitHub, commits, PRs, or any internal artifact."
+      : "Write a 350-550 word sponsor-facing newsletter for non-technical readers (sponsors, partners, and general users). Structure: a one-line headline, a 2-sentence intro that states the headline plainly, then 3-5 short sections with bolded section headers covering the week's shipped work, a 'what is next' beat, and a closing line. Tone is calm, partner-facing, specific, and effortless - never synthetic or forced. Use Markdown for structure (headings with ##, bold with **, lists with -). Reference concrete user-facing items from the source. Do not invent partners, metrics, or testimonials, and do not reference GitHub, commits, PRs, or any internal artifact.";
 
   return (
     `Source data for the week (do not invent beyond this):\n\n` +
@@ -220,7 +225,7 @@ function buildDraftAgents({ screenshotTool }: BuildAgentsOptions): { linkedinAge
     name: "LinkedIn Draft Agent",
     handoffDescription: "Writes a LinkedIn post for the weekly update.",
     instructions:
-      "You write LinkedIn posts for a small dev team's weekly update.\n" +
+      "You write LinkedIn posts for a small dev team's weekly update, aimed at non-technical readers (sponsors, partners, and general users). The post should read like a calm, human update from the team, not an automated engineering digest.\n" +
       SHARED_RULES,
     model: AGENT_MODEL,
     tools: [screenshotTool],
@@ -230,7 +235,7 @@ function buildDraftAgents({ screenshotTool }: BuildAgentsOptions): { linkedinAge
     name: "Newsletter Draft Agent",
     handoffDescription: "Writes a sponsor-facing newsletter for the weekly update.",
     instructions:
-      "You write sponsor-facing newsletters for a small dev team's weekly update.\n" +
+      "You write sponsor-facing newsletters for a small dev team's weekly update, aimed at non-technical readers (sponsors, partners, and general users). The newsletter should read like a calm, human update from the team, not an automated engineering digest.\n" +
       SHARED_RULES,
     model: AGENT_MODEL,
     tools: [screenshotTool],

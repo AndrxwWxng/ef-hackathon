@@ -4,8 +4,7 @@ import { createServer, type Server } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { spawn, type ChildProcessByStdio } from "node:child_process";
-import { Readable } from "node:stream";
+import { spawn } from "node:child_process";
 
 import type { DetectedProject, RunningApp } from "./types";
 
@@ -42,7 +41,7 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 type Log = (line: string) => void;
-type ProcessChild = ChildProcessByStdio<null, Readable, Readable>;
+type ProcessChild = ReturnType<typeof spawn>;
 type CommandResult = { code: number; lines: string[]; timedOut: boolean; spawnError?: Error };
 
 function cleanLine(line: string) {
@@ -114,7 +113,8 @@ function splitCommand(command: string) {
 
 async function binaryExists(file: string) {
   return await new Promise<boolean>((resolve) => {
-    const child = spawn(file, ["--version"], { stdio: "ignore", env: scrubbedEnv(), shell: false });
+    const useShell = isWindowsScript(file);
+    const child = spawn(file, ["--version"], { stdio: "ignore", env: scrubbedEnv(), shell: useShell });
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
       resolve(false);
@@ -158,6 +158,10 @@ async function exists(filePath: string) {
   }
 }
 
+function isWindowsScript(file: string): boolean {
+  return process.platform === "win32" && !/\.(exe|com)$/i.test(file);
+}
+
 async function getFreePort() {
   return await new Promise<number>((resolve, reject) => {
     const server = net.createServer();
@@ -179,8 +183,9 @@ function runCommand({ file, args, cwd, env, timeoutMs, onLog, label }: { file: s
       if (line) onLog(line);
     };
     let child: ProcessChild;
+    const useShell = isWindowsScript(file);
     try {
-      child = spawn(file, args, { cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"], shell: false });
+      child = spawn(file, args, { cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"], shell: useShell, windowsVerbatimArguments: false });
     } catch (error) {
       const spawnError = error instanceof Error ? error : new Error(String(error));
       log(`[${label}] failed to spawn: ${spawnError.message}`);
@@ -190,8 +195,8 @@ function runCommand({ file, args, cwd, env, timeoutMs, onLog, label }: { file: s
 
     const stdout = makeLineSplitter(log);
     const stderr = makeLineSplitter(log);
-    child.stdout.on("data", stdout);
-    child.stderr.on("data", stderr);
+    if (child.stdout) child.stdout.on("data", stdout);
+    if (child.stderr) child.stderr.on("data", stderr);
 
     let timedOut = false;
     const timer = setTimeout(() => {
@@ -209,7 +214,10 @@ function runCommand({ file, args, cwd, env, timeoutMs, onLog, label }: { file: s
       stderr.flush();
       resolve({ code, lines, timedOut, spawnError });
     };
-    child.once("error", (error) => finish(-1, error));
+    child.once("error", (error) => {
+      log(`[${label}] spawn error: ${error.message}`);
+      finish(-1, error instanceof Error ? error : new Error(String(error)));
+    });
     child.once("close", (code, signal) => finish(code ?? (signal ? -1 : 0)));
   });
 }
@@ -407,7 +415,7 @@ export async function startApp(dir: string, detected: DetectedProject, onLog: Lo
     env: scrubbedEnv({ PORT: String(requestedPort), HOST: "127.0.0.1" }),
     detached: true,
     stdio: ["ignore", "pipe", "pipe"],
-    shell: false,
+    shell: isWindowsScript(parts[0]),
   });
   const lines: string[] = [];
   const seenPorts = new Set<number>();
@@ -420,8 +428,8 @@ export async function startApp(dir: string, detected: DetectedProject, onLog: Lo
   };
   const stdout = makeLineSplitter(record);
   const stderr = makeLineSplitter(record);
-  child.stdout.on("data", stdout);
-  child.stderr.on("data", stderr);
+  if (child.stdout) child.stdout.on("data", stdout);
+  if (child.stderr) child.stderr.on("data", stderr);
 
   let exited = false;
   child.once("error", (error) => record(`[boot] ${error.message}`));

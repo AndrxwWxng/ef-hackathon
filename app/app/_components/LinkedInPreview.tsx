@@ -1,4 +1,11 @@
 import { useMemo } from "react";
+import { FaLinkedin } from "react-icons/fa";
+import {
+  IoChatbubbleOutline,
+  IoPaperPlaneOutline,
+  IoRepeat,
+  IoThumbsUpOutline,
+} from "react-icons/io5";
 import { Markdown } from "./Markdown";
 
 type Props = {
@@ -15,9 +22,7 @@ export function LinkedInPreview({ body, authorName, authorTitle }: Props) {
     <div className="w-[520px] max-w-full overflow-hidden rounded-xl border border-black/10 bg-white text-[#1f1f1f] shadow-[0_24px_60px_-44px_rgba(15,23,42,0.35)]">
       <div className="flex items-center justify-between border-b border-black/[0.06] bg-white px-4 py-2.5">
         <div className="flex items-center gap-2">
-          <span className="grid h-4 w-4 place-items-center rounded-sm bg-[#0a66c2] text-[8px] font-bold text-white">
-            in
-          </span>
+          <FaLinkedin className="h-4 w-4 text-[#0a66c2]" aria-hidden />
           <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-[#5e5e5e]">
             LinkedIn preview
           </span>
@@ -91,29 +96,20 @@ function initials(name: string) {
 }
 
 function IconAction({ label }: { label: string }) {
-  const icon: Record<string, string> = {
-    Like: "M14 9V5a3 3 0 0 0-3-3l-1 4 4 3Zm0 0H4v8h10l2-3",
-    Comment: "M3 5h10v6H6l-3 3z",
-    Repost: "M4 8V5l-3 3 3 3v-3h7M12 11v3l3-3-3-3v3H5",
-    Send: "M2 8l12-6-4 14-3-6-5-2z",
-  };
+  const Icon =
+    label === "Like"
+      ? IoThumbsUpOutline
+      : label === "Comment"
+        ? IoChatbubbleOutline
+        : label === "Repost"
+          ? IoRepeat
+          : IoPaperPlaneOutline;
   return (
     <button
       type="button"
       className="flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-2 text-[12.5px] transition-colors hover:bg-black/[0.04]"
     >
-      <svg
-        viewBox="0 0 16 16"
-        className="h-4 w-4"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden
-      >
-        <path d={icon[label] ?? ""} />
-      </svg>
+      <Icon className="h-4 w-4" aria-hidden />
       {label}
     </button>
   );

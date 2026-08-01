@@ -1,3 +1,11 @@
+import { SiX } from "react-icons/si";
+import {
+  IoChatbubbleOutline,
+  IoEyeOutline,
+  IoHeart,
+  IoRepeat,
+  IoShareOutline,
+} from "react-icons/io5";
 import { Markdown } from "./Markdown";
 
 type Props = {
@@ -15,9 +23,7 @@ export function XPreview({ body, authorName, authorHandle }: Props) {
     <div className="w-[560px] max-w-full overflow-hidden rounded-xl border border-black/10 bg-black text-[#e7e9ea] shadow-[0_24px_60px_-44px_rgba(0,0,0,0.6)]">
       <div className="flex items-center justify-between border-b border-white/[0.08] bg-black px-4 py-2.5">
         <div className="flex items-center gap-2">
-          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 text-white" fill="currentColor" aria-hidden>
-            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-          </svg>
+          <SiX className="h-3.5 w-3.5 text-white" aria-hidden />
           <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-[#71767b]">
             X post preview
           </span>
@@ -111,13 +117,16 @@ function Action({
   count?: string;
   active?: boolean;
 }) {
-  const d: Record<typeof icon, string> = {
-    reply: "M3 8c2-3 6-3 8 0v4l3-3-3 3c-2 3-6 3-8 0z",
-    repost: "M4 8V5l-3 3 3 3v-3h7M12 11v3l3-3-3-3v3H5",
-    like: "M9 14s-5-2.5-5-6a3 3 0 0 1 5-2 3 3 0 0 1 5 2c0 3.5-5 6-5 6z",
-    view: "M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5zm7 1a2 2 0 1 0 0-4 2 2 0 0 0 0 4z",
-    share: "M2 8l12-6-4 14-3-6-5-2z",
-  };
+  const Icon =
+    icon === "like" && active
+      ? IoHeart
+      : icon === "reply"
+        ? IoChatbubbleOutline
+        : icon === "repost"
+          ? IoRepeat
+          : icon === "view"
+            ? IoEyeOutline
+            : IoShareOutline;
   const color = active
     ? "text-[#f91880]"
     : icon === "repost"
@@ -128,18 +137,7 @@ function Action({
       type="button"
       className={"group flex items-center gap-1 rounded-full px-2 py-1 text-[12px] transition-colors hover:bg-white/5 " + color}
     >
-      <svg
-        viewBox="0 0 16 16"
-        className="h-[18px] w-[18px]"
-        fill={active && icon === "like" ? "currentColor" : "none"}
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden
-      >
-        <path d={d[icon]} />
-      </svg>
+      <Icon className="h-[18px] w-[18px]" aria-hidden />
       {count ? <span>{count}</span> : null}
     </button>
   );

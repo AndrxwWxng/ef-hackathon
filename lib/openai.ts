@@ -41,14 +41,14 @@ export function buildSourceContext(source: WeeklySource): string {
 export type DraftKind = "newsletter" | "linkedin" | "x";
 
 const AUDIENCE_INSTRUCTIONS =
-  "Audience: a non-technical sponsor or partner. They want to know what changed, " +
-  "what it means for them, and what is next. " +
-  "Voice the work in plain language. Keep concrete specs, numbers, and named features " +
-  "when they matter to the reader. " +
-  "Strip engineer-flavored identifiers that do not help the reader: do not mention " +
-  "commit SHAs, repository paths, PR numbers, voice-note IDs, or internal tags. " +
-  "Frame the writing as a progress check, not a play-by-play. Lead with the win, not the diff. " +
-  "You never invent partners, metrics, or testimonials. " +
+  "Audience: non-technical readers (sponsors, partners, and general users). They do not write code and do not follow engineering workflows. Write so a curious but non-technical person can read it end-to-end and feel informed, not lost.\n" +
+  "They want to know what changed, what it means for them, and what is next. Voice the work in plain language. Keep concrete specs, numbers, and named features when they matter to the reader.\n" +
+  "Never reveal the product's plumbing. Do not mention GitHub, commits, pull requests, commit SHAs, repository paths, branches, merges, voice-note IDs, internal tags, or any other artifact of how the post was generated. To the reader, the writing should feel like a calm, human update from the team, not an automated digest of source code.\n" +
+  "Cover only what matters to the end user or a sponsor: visible UI/visual changes, new or changed functionality, security and privacy improvements, testing/quality changes that affect reliability, and anything else a sponsor or user would actually care about. Skip internal refactors, dependency churn, tooling changes, and other developer-only work unless they have a direct, visible user benefit (and even then, frame it in user terms).\n" +
+  "Keep it tight and high-signal. Lead with what shipped and why it matters, not the journey. Skip filler, throat-clearing, and restating the headline. Every sentence should earn its place.\n" +
+  "Tone: natural and effortless, never forced, breathless, hype-driven, or AI-synthesized. No generic openers, no manufactured enthusiasm, no em-dash-heavy cadence. Sound like a real person who happened to write the update.\n" +
+  "Frame the writing as a progress check, not a play-by-play. Lead with the win, not the diff.\n" +
+  "You never invent partners, metrics, or testimonials.\n" +
   "You avoid em dashes; use hyphens, colons, or rewrite instead.";
 
 export type DraftRequest = {
@@ -60,10 +60,10 @@ export type DraftRequest = {
 
 const KIND_INSTRUCTIONS: Record<DraftKind, string> = {
   newsletter:
-    "Write a 350–550 word sponsor-facing newsletter. Structure: a one-line headline, a 2-sentence intro that states the headline plainly, then 3–5 short sections with bolded section headers covering the week's shipped work, a 'what is next' beat, and a closing line. Tone is calm, partner-facing, and specific. Use Markdown for structure (headings with ##, bold with **, lists with -). Reference concrete items from the source. Do not invent partners, metrics, or testimonials.",
+    "Write a 350-550 word sponsor-facing newsletter for non-technical readers. Structure: a one-line headline, a 2-sentence intro that states the headline plainly, then 3-5 short sections with bolded section headers covering the week's shipped work, a 'what is next' beat, and a closing line. Tone is calm, partner-facing, specific, and effortless - never synthetic or forced. Use Markdown for structure (headings with ##, bold with **, lists with -). Reference concrete user-facing items from the source. Do not invent partners, metrics, or testimonials, and do not reference GitHub, commits, PRs, or any internal artifact.",
   linkedin:
-    "Write a LinkedIn post of roughly 800–1,400 characters. Open with the single most interesting shipped item in one short line, then 3-5 short paragraphs that surface the other wins without bullet-list formatting. Close with a one-sentence forward-looking line. Use minimal Markdown (line breaks, occasional **bold** for emphasis). Tone is direct and status-forward. Reference concrete items from the source. Do not invent partners, metrics, or testimonials.",
-  x: "Write a single X (Twitter) post, 240-280 characters total. Lead with the week's main shipping beat, weave in one or two concrete details, end on a forward note. Lowercase is fine. No hashtags unless natural. Do not invent partners, metrics, or testimonials.",
+    "Write a LinkedIn post of roughly 800-1,400 characters for non-technical readers. Open with the single most interesting shipped item in one short line, then 3-5 short paragraphs that surface the other wins without bullet-list formatting. Close with a one-sentence forward-looking line. Use minimal Markdown (line breaks, occasional **bold** for emphasis). Tone is direct, calm, and status-forward - never breathless or hype-driven. Reference concrete user-facing items from the source. Do not invent partners, metrics, or testimonials, and do not reference GitHub, commits, PRs, or any internal artifact.",
+  x: "Write a single X (Twitter) post, 240-280 characters total for non-technical readers. Lead with the week's main shipping beat, weave in one or two concrete user-facing details, end on a forward note. Lowercase is fine. No hashtags unless natural. Do not invent partners, metrics, or testimonials, and do not reference GitHub, commits, PRs, or any internal artifact.",
 };
 
 const TONE_INSTRUCTIONS: Record<string, string> = {
