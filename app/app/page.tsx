@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowRight, Check, ChevronDown, Copy, Plus, RefreshCw, X } from "lucide-react";
 
 import { NewsletterPreview } from "./_components/NewsletterPreview";
 import { LinkedInPreview } from "./_components/LinkedInPreview";
@@ -338,7 +339,7 @@ export default function AppHome() {
   const [state, setState] = useState<GenerationState>({ status: "idle" });
   const [configOpen, setConfigOpen] = useState(true);
   const [sourceConfig, setSourceConfig] = useState<SourceConfig>({
-    github: "multimail/api",
+    github: "https://github.com/AndrxwWxng/ef-hackathon",
     writingSamples: [
       "We shipped a faster ingest path (4x), closed two long-standing integration gaps, and softened the digest tone.",
     ],
@@ -420,12 +421,12 @@ export default function AppHome() {
         prev.map((a) =>
           a.id === kind
             ? {
-                ...a,
-                body: textJson.text,
-                metric: approxMetric(kind, textJson.text),
-                imageDataUrl,
-                generated: true,
-              }
+              ...a,
+              body: textJson.text,
+              metric: approxMetric(kind, textJson.text),
+              imageDataUrl,
+              generated: true,
+            }
             : a,
         ),
       );
@@ -552,1185 +553,1151 @@ export default function AppHome() {
       if (!sawError) {
         void refresh();
       }
-    setRunning(true);
-    const order: ArtifactKind[] = ["newsletter", "linkedin", "x"];
-    for (const target of order) {
-      if (!targets.has(target)) continue;
-      await generateOne(target);
+      setRunning(true);
+      const order: ArtifactKind[] = ["newsletter", "linkedin", "x"];
+      for (const target of order) {
+        if (!targets.has(target)) continue;
+        await generateOne(target);
+      }
     }
   }
+    function toggleTarget(kind: ArtifactKind) {
+      setTargets((prev) => {
+        const next = new Set(prev);
+        if (next.has(kind)) next.delete(kind);
+        else next.add(kind);
+        return next;
+      });
+    }
 
-  function toggleTarget(kind: ArtifactKind) {
-    setTargets((prev) => {
-      const next = new Set(prev);
-      if (next.has(kind)) next.delete(kind);
-      else next.add(kind);
-      return next;
-    });
-  }
+    function updateSample(idx: number, value: string) {
+      setSourceConfig((prev) => {
+        const samples = [...prev.writingSamples];
+        samples[idx] = value;
+        return { ...prev, writingSamples: samples };
+      });
+    }
 
-  function updateSample(idx: number, value: string) {
-    setSourceConfig((prev) => {
-      const samples = [...prev.writingSamples];
-      samples[idx] = value;
-      return { ...prev, writingSamples: samples };
-    });
-  }
+    function addSample() {
+      setSourceConfig((prev) => ({
+        ...prev,
+        writingSamples: [...prev.writingSamples, ""],
+      }));
+    }
 
-  function addSample() {
-    setSourceConfig((prev) => ({
-      ...prev,
-      writingSamples: [...prev.writingSamples, ""],
-    }));
-  }
+    function removeSample(idx: number) {
+      setSourceConfig((prev) => ({
+        ...prev,
+        writingSamples: prev.writingSamples.filter((_, i) => i !== idx),
+      }));
+    }
 
-  function removeSample(idx: number) {
-    setSourceConfig((prev) => ({
-      ...prev,
-      writingSamples: prev.writingSamples.filter((_, i) => i !== idx),
-    }));
-  }
+    async function handleRegenerate() {
+      setRunning(true);
+      await generateOne(activeId);
+      setRunning(false);
+    }
 
-  async function handleRegenerate() {
-    setRunning(true);
-    await generateOne(activeId);
-    setRunning(false);
-  }
+    const isGenerating = running || state.status === "loading";
 
-  const isGenerating = running || state.status === "loading";
-
-  const openComposer = (modality: Modality) => {
-    setFeedback("");
-    setPendingFile(null);
-    if (modality === "discord" || modality === "slack") {
-      setComposer({
-        kind: "connector",
-        modality,
-        draft: {
+    const openComposer = (modality: Modality) => {
+      setFeedback("");
+      setPendingFile(null);
+      if (modality === "discord" || modality === "slack") {
+        setComposer({
+          kind: "connector",
           modality,
-          token: "",
-          channelId: "",
-          workspace: "",
-          label: "",
-          limit: 50,
-        },
-      });
-      return;
-    }
-    setComposer({ kind: "file", modality, label: "", text: "" });
-  };
-
-  const closeComposer = () => {
-    setComposer(null);
-    setPendingFile(null);
-    setFeedback("");
-  };
-
-  const handleFile = (file: File | null) => {
-    if (!composer || composer.kind !== "file" || composer.modality === "text" || !file) return;
-    setPendingFile({ modality: composer.modality, file });
-    setComposer((prev) => (prev && prev.kind === "file" ? { ...prev, label: prev.label || file.name } : prev));
-  };
-
-  const submitComposer = async () => {
-    if (!composer) return;
-    setAdding(true);
-    setFeedback("");
-    try {
-      let body: Record<string, unknown>;
-      if (composer.kind === "connector") {
-        const draft = composer.draft;
-        if (!draft.token.trim()) {
-          setFeedback("bot token is required");
-          setAdding(false);
-          return;
-        }
-        if (!draft.channelId.trim()) {
-          setFeedback("channel id is required");
-          setAdding(false);
-          return;
-        }
-        body = {
-          kind: draft.modality,
-          token: draft.token.trim(),
-          channelId: draft.channelId.trim(),
-          workspace: draft.workspace?.trim() || undefined,
-          label: draft.label.trim() || undefined,
-          limit: draft.limit,
-        };
-      } else if (composer.modality === "text") {
-        if (!composer.text.trim()) {
-          setFeedback("paste some text first");
-          setAdding(false);
-          return;
-        }
-        body = { kind: "text", label: composer.label.trim() || "Pasted note", text: composer.text };
-      } else {
-        if (!pendingFile) {
-          setFeedback("pick a file first");
-          setAdding(false);
-          return;
-        }
-        const dataUrl = await readFileAsDataUrl(pendingFile.file);
-        body = {
-          kind: composer.modality,
-          label: composer.label.trim() || pendingFile.file.name,
-          fileName: pendingFile.file.name,
-          mimeType: pendingFile.file.type,
-          dataUrl,
-        };
+          draft: {
+            modality,
+            token: "",
+            channelId: "",
+            workspace: "",
+            label: "",
+            limit: 50,
+          },
+        });
+        return;
       }
-      const res = await fetch("/app/api/ingest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const json = (await res.json()) as { error?: string };
-      if (!res.ok) {
-        setFeedback(json.error ?? "ingest failed");
+      setComposer({ kind: "file", modality, label: "", text: "" });
+    };
+
+    const closeComposer = () => {
+      setComposer(null);
+      setPendingFile(null);
+      setFeedback("");
+    };
+
+    const handleFile = (file: File | null) => {
+      if (!composer || composer.kind !== "file" || composer.modality === "text" || !file) return;
+      setPendingFile({ modality: composer.modality, file });
+      setComposer((prev) => (prev && prev.kind === "file" ? { ...prev, label: prev.label || file.name } : prev));
+    };
+
+    const submitComposer = async () => {
+      if (!composer) return;
+      setAdding(true);
+      setFeedback("");
+      try {
+        let body: Record<string, unknown>;
+        if (composer.kind === "connector") {
+          const draft = composer.draft;
+          if (!draft.token.trim()) {
+            setFeedback("bot token is required");
+            setAdding(false);
+            return;
+          }
+          if (!draft.channelId.trim()) {
+            setFeedback("channel id is required");
+            setAdding(false);
+            return;
+          }
+          body = {
+            kind: draft.modality,
+            token: draft.token.trim(),
+            channelId: draft.channelId.trim(),
+            workspace: draft.workspace?.trim() || undefined,
+            label: draft.label.trim() || undefined,
+            limit: draft.limit,
+          };
+        } else if (composer.modality === "text") {
+          if (!composer.text.trim()) {
+            setFeedback("paste some text first");
+            setAdding(false);
+            return;
+          }
+          body = { kind: "text", label: composer.label.trim() || "Pasted note", text: composer.text };
+        } else {
+          if (!pendingFile) {
+            setFeedback("pick a file first");
+            setAdding(false);
+            return;
+          }
+          const dataUrl = await readFileAsDataUrl(pendingFile.file);
+          body = {
+            kind: composer.modality,
+            label: composer.label.trim() || pendingFile.file.name,
+            fileName: pendingFile.file.name,
+            mimeType: pendingFile.file.type,
+            dataUrl,
+          };
+        }
+        const res = await fetch("/app/api/ingest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const json = (await res.json()) as { error?: string };
+        if (!res.ok) {
+          setFeedback(json.error ?? "ingest failed");
+          setAdding(false);
+          return;
+        }
+        setFeedback("added");
+        await refresh();
+        closeComposer();
+      } catch (err) {
+        setFeedback(err instanceof Error ? err.message : String(err));
+      } finally {
         setAdding(false);
-        return;
       }
-      setFeedback("added");
-      await refresh();
-      closeComposer();
-    } catch (err) {
-      setFeedback(err instanceof Error ? err.message : String(err));
-    } finally {
-      setAdding(false);
-    }
-  };
+    };
 
-  const removeSource = async (id: string) => {
-    const res = await fetch(`/app/api/sources/${id}`, { method: "DELETE" });
-    if (res.ok) await refresh();
-  };
+    const removeSource = async (id: string) => {
+      const res = await fetch(`/app/api/sources/${id}`, { method: "DELETE" });
+      if (res.ok) await refresh();
+    };
 
-  const refreshSource = async (id: string) => {
-    setRefreshingId(id);
-    try {
-      const res = await fetch(`/app/api/sources/${id}/refresh`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      const json = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) {
-        setFeedback(json.error ?? "refresh failed");
-        return;
+    const refreshSource = async (id: string) => {
+      setRefreshingId(id);
+      try {
+        const res = await fetch(`/app/api/sources/${id}/refresh`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        const json = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok) {
+          setFeedback(json.error ?? "refresh failed");
+          return;
+        }
+        await refresh();
+      } finally {
+        setRefreshingId(null);
       }
-      await refresh();
-    } finally {
-      setRefreshingId(null);
-    }
-  };
+    };
 
-  const triggerFilePicker = () => {
-    fileInputRef.current?.click();
-  };
+    const triggerFilePicker = () => {
+      fileInputRef.current?.click();
+    };
 
-  const connectedCount = sources.filter((s) => s.status !== "error").length;
+    const connectedCount = sources.filter((s) => s.status !== "error").length;
 
-  return (
-    <main className="mx-auto flex min-h-[calc(100vh-72px)] w-full max-w-[1480px] flex-col justify-center gap-5 px-4 py-5 sm:px-5 lg:px-6">
-      <header className="flex flex-col gap-3 border-b border-[var(--app-line)] pb-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-            <span>Workspace</span>
-            <span className="text-[var(--app-line)]">·</span>
-            <span className="text-[var(--app-ink)]">Week 32</span>
+    return (
+      <main className="mx-auto flex min-h-[calc(100vh-72px)] w-full max-w-[1480px] flex-col justify-center gap-5 px-4 py-5 sm:px-5 lg:px-6">
+        <header className="flex flex-col gap-3 border-b border-[var(--app-line)] pb-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+              <span>Workspace</span>
+              <span className="text-[var(--app-line)]">·</span>
+              <span className="text-[var(--app-ink)]">Week 32</span>
+            </div>
+            <h1 className="font-serif text-[1.55rem] font-medium leading-[1.05] tracking-[-0.02em] sm:text-[1.7rem]">
+              Wrap the week into three drafts.
+            </h1>
+            <p className="max-w-xl text-[12px] leading-relaxed text-[var(--app-muted)]">
+              {context
+                ? `${context.sourceCount} source${context.sourceCount === 1 ? "" : "s"} · ${context.words} words · ${context.minutes.toFixed(1)} min ingested · drafts generated locally · nothing sent without a click.`
+                : "Aug 4 – Aug 10 · drafts generated locally · nothing sent without a click."}
+            </p>
           </div>
-          <h1 className="font-serif text-[1.55rem] font-medium leading-[1.05] tracking-[-0.02em] sm:text-[1.7rem]">
-            Wrap the week into three drafts.
-          </h1>
-          <p className="max-w-xl text-[12px] leading-relaxed text-[var(--app-muted)]">
-            {context
-              ? `${context.sourceCount} source${context.sourceCount === 1 ? "" : "s"} · ${context.words} words · ${context.minutes.toFixed(1)} min ingested · drafts generated locally · nothing sent without a click.`
-              : "Aug 4 – Aug 10 · drafts generated locally · nothing sent without a click."}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-2 rounded-full border border-[var(--app-line)] bg-[var(--app-panel)] px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
-            <span aria-hidden className="relative grid h-1.5 w-1.5 place-items-center">
-              <span className="absolute inset-0 animate-ping rounded-full bg-[var(--app-accent)] opacity-60" />
-              <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-accent)]" />
-            </span>
-            {isGenerating ? "Generating…" : state.status === "error" ? "Error" : "Ready to run"}
-          </div>
-          <button
-            type="button"
-            onClick={handleRun}
-            disabled={isGenerating || targets.size === 0}
-            className="group inline-flex h-9 items-center justify-center gap-2 rounded-full bg-[var(--app-ink)] px-4 text-[13px] font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isGenerating ? "Running…" : "Run the week"}
-            <svg
-              viewBox="0 0 16 16"
-              className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2 rounded-full border border-[var(--app-line)] bg-[var(--app-panel)] px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
+              <span aria-hidden className="relative grid h-1.5 w-1.5 place-items-center">
+                <span className="absolute inset-0 animate-ping rounded-full bg-[var(--app-accent)] opacity-60" />
+                <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-accent)]" />
+              </span>
+              {isGenerating ? "Generating…" : state.status === "error" ? "Error" : "Ready to run"}
+            </div>
+            <button
+              type="button"
+              onClick={handleRun}
+              disabled={isGenerating || targets.size === 0}
+              className="group inline-flex h-9 items-center justify-center gap-2 rounded-full bg-[var(--app-ink)] px-4 text-[13px] font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <path d="M3 8h10M9 4l4 4-4 4" />
-            </svg>
-          </button>
-        </div>
-      </header>
+              {isGenerating ? "Running…" : "Run the week"}
+              <ArrowRight
+                className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5"
+                aria-hidden
+              />
+            </button>
+          </div>
+        </header>
 
-      {state.status === "error" && (
-        <div
-          role="alert"
-          className="rounded-2xl border border-[var(--app-accent)]/40 bg-[var(--app-accent)]/5 px-4 py-3 text-[12px] text-[var(--app-ink)]"
-        >
-          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-accent)]">Generation error</span>
-          <p className="mt-1">{state.error}</p>
-        </div>
-      )}
+        {state.status === "error" && (
+          <div
+            role="alert"
+            className="rounded-2xl border border-[var(--app-accent)]/40 bg-[var(--app-accent)]/5 px-4 py-3 text-[12px] text-[var(--app-ink)]"
+          >
+            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-accent)]">Generation error</span>
+            <p className="mt-1">{state.error}</p>
+          </div>
+        )}
 
-      <div className="grid gap-5 lg:grid-cols-[280px_1fr] xl:grid-cols-[300px_1fr]">
-        <aside className="sticky top-14 flex max-h-[calc(100vh-3.5rem)] flex-col gap-3 overflow-y-auto pr-1">
-          <section className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                Sources
-              </h2>
-              <span className="font-mono text-[10.5px] text-[var(--app-muted)]">
-                {connectedCount} / {sources.length || 0}
-              </span>
-            </div>
-            <ul className="flex flex-col">
-              {sources.length === 0 && !loadingSources && (
-                <li className="py-3 text-[12px] text-[var(--app-muted)]">
-                  No sources yet — paste a note, drop a voice memo, add a video clip, or connect a Discord or Slack channel.
-                </li>
-              )}
-              {sources.map((source, i) => (
-                <li
-                  key={source.id}
-                  className={
-                    "flex items-start gap-3 py-2.5 " +
-                    (i !== 0 ? "border-t border-[var(--app-line)]" : "")
-                  }
-                >
-                  <span
-                    aria-hidden
-                    className={
-                      "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full " +
-                      (source.status === "error"
-                        ? "bg-[#c23a2b]"
-                        : "bg-[var(--app-accent)]")
-                    }
-                  />
-                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="truncate text-[12.5px] font-medium text-[var(--app-ink)]">
-                        {source.label}
-                      </span>
-                      <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
-                        {MODALITY_META[source.modality].meta}
-                      </span>
-                    </div>
-                    <p className="truncate text-[11.5px] text-[var(--app-muted)]">
-                      {describeSource(source)}
-                    </p>
-                    {summarizeKeyPhrases(source) && (
-                      <p className="truncate text-[11px] italic text-[var(--app-muted)]">
-                        {summarizeKeyPhrases(source)}
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    {source.connector && (
-                      <button
-                        type="button"
-                        onClick={() => refreshSource(source.id)}
-                        disabled={refreshingId === source.id}
-                        aria-label={`Refresh ${source.label}`}
-                        className="grid h-5 w-5 place-items-center rounded-full text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)] hover:text-[var(--app-ink)] disabled:opacity-50"
-                      >
-                        <svg
-                          viewBox="0 0 16 16"
-                          className={
-                            "h-3 w-3 " + (refreshingId === source.id ? "animate-spin" : "")
-                          }
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          aria-hidden
-                        >
-                          <path d="M2 8a6 6 0 0 1 10.39-4.1M14 8a6 6 0 0 1-10.39 4.1" />
-                          <path d="M13 1.5v3.5h-3.5M3 14.5v-3.5h3.5" />
-                        </svg>
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => removeSource(source.id)}
-                      className="grid h-5 w-5 place-items-center rounded-full text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)] hover:text-[var(--app-ink)]"
-                      aria-label={`Remove ${source.label}`}
-                    >
-                      <svg viewBox="0 0 16 16" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M3 3l10 10M13 3L3 13" />
-                      </svg>
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-            <div className="mt-1 flex flex-wrap gap-1.5">
-              {(Object.keys(MODALITY_META) as Modality[]).map((modality) => (
-                <button
-                  key={modality}
-                  type="button"
-                  onClick={() => openComposer(modality)}
-                  className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[var(--app-line)] px-3 text-[12px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)]"
-                >
-                  <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                    <path d="M8 3v10M3 8h10" />
-                  </svg>
-                  {MODALITY_META[modality].label}
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <details className="group rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4 [&[open]]:pb-3" open={configOpen} onToggle={(event) => setConfigOpen((event.target as HTMLDetailsElement).open)}>
-            <summary className="flex cursor-pointer list-none items-center justify-between outline-none">
-              <h2 className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                Configuration
-              </h2>
-              <span className="flex items-center gap-2 font-mono text-[10.5px] text-[var(--app-muted)]">
-                {(writtenSamples.length + (sourceConfig.github.trim() ? 1 : 0))} active
-                <svg viewBox="0 0 16 16" className="h-3 w-3 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                  <path d="M4 6l4 4 4-4" />
-                </svg>
-              </span>
-            </summary>
-
-            <div className="mt-3 flex flex-col gap-3">
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center gap-2">
-                  <span aria-hidden className="grid h-5 w-5 place-items-center rounded-md bg-[#0f172a] text-white">
-                    <svg viewBox="0 0 16 16" className="h-3 w-3" fill="currentColor" aria-hidden>
-                      <path d="M8 .2a8 8 0 0 0-2.5 15.6c.4.1.5-.2.5-.4v-1.4c-2.2.5-2.7-1-2.7-1-.4-.9-.9-1.2-.9-1.2-.7-.5.1-.5.1-.5.8.1 1.2.8 1.2.8.7 1.2 1.9.9 2.4.7.1-.5.3-.9.5-1.1-1.8-.2-3.6-.9-3.6-3.9 0-.9.3-1.6.8-2.1-.1-.2-.4-1 .1-2.1 0 0 .7-.2 2.2.8a7.7 7.7 0 0 1 4 0c1.5-1 2.2-.8 2.2-.8.5 1.1.2 1.9.1 2.1.5.5.8 1.2.8 2.1 0 3-1.8 3.7-3.6 3.9.3.3.6.8.6 1.6v2.4c0 .2.1.5.5.4A8 8 0 0 0 8 .2z" />
-                    </svg>
-                  </span>
-                  <span className="text-[12.5px] font-medium">GitHub repo</span>
-                </div>
-                <label className="flex flex-col gap-1">
-                  <span className="sr-only">GitHub repository</span>
-                  <input
-                    type="text"
-                    value={sourceConfig.github}
-                    onChange={(event) =>
-                      setSourceConfig((prev) => ({ ...prev, github: event.target.value }))
-                    }
-                    placeholder="owner/repo"
-                    className="h-8 w-full rounded-md border border-[var(--app-line)] bg-[var(--app-paper)] px-3 font-mono text-[12px] outline-none transition-colors focus:border-[var(--app-ink)]"
-                  />
-                </label>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[12.5px] font-medium">Writing samples</span>
-                  <button
-                    type="button"
-                    onClick={addSample}
-                    className="rounded-full border border-[var(--app-line)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-ink)]"
-                  >
-                    + add
-                  </button>
-                </div>
-                <div className="flex flex-col gap-2">
-                  {sourceConfig.writingSamples.map((sample, idx) => (
-                    <div key={`sample-${idx}`} className="flex flex-col gap-1">
-                      <label className="flex flex-col gap-1">
-                        <span className="sr-only">Writing sample {idx + 1}</span>
-                        <textarea
-                          rows={2}
-                          value={sample}
-                          onChange={(event) => updateSample(idx, event.target.value)}
-                          placeholder={`Paste an example ${idx === 0 ? "newsletter intro" : "post"}…`}
-                          className="w-full resize-none rounded-md border border-[var(--app-line)] bg-[var(--app-paper)] px-3 py-2 text-[12px] leading-snug outline-none transition-colors focus:border-[var(--app-ink)]"
-                        />
-                      </label>
-                      {sourceConfig.writingSamples.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => removeSample(idx)}
-                          className="self-end font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-accent)]"
-                        >
-                          remove
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[12.5px] font-medium">Mood</span>
-                  <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
-                    {sourceConfig.mood === "default" ? "default" : "applied"}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {MOOD_OPTIONS.map((m) => {
-                    const selected = sourceConfig.mood === m.id;
-                    return (
-                      <button
-                        key={m.id}
-                        type="button"
-                        onClick={() =>
-                          setSourceConfig((prev) => ({ ...prev, mood: m.id }))
-                        }
-                        aria-pressed={selected}
-                        className={
-                          "flex flex-col items-start gap-0.5 rounded-md border px-2 py-1.5 text-left transition-all " +
-                          (selected
-                            ? "border-[var(--app-ink)] bg-[var(--app-soft)]"
-                            : "border-[var(--app-line)] bg-[var(--app-paper)] hover:border-[var(--app-muted)]")
-                        }
-                      >
-                        <span className="text-[11.5px] font-medium text-[var(--app-ink)]">
-                          {m.label}
-                        </span>
-                        <span className="text-[10px] leading-snug text-[var(--app-muted)]">
-                          {m.hint}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          </details>
-
-          {context && context.sourceCount > 0 && (
-            <details className="group rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4 [&[open]]:pb-3" open>
-              <summary className="flex cursor-pointer list-none items-center justify-between outline-none">
+        <div className="grid gap-5 lg:grid-cols-[280px_1fr] xl:grid-cols-[300px_1fr]">
+          <aside className="sticky top-14 flex max-h-[calc(100vh-3.5rem)] flex-col gap-3 overflow-y-auto pr-1">
+            <section className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
+              <div className="flex items-center justify-between">
                 <h2 className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                  Ingested context
+                  Sources
                 </h2>
-                <span className="flex items-center gap-2 font-mono text-[10.5px] text-[var(--app-muted)]">
-                  {context.sourceCount} source{context.sourceCount === 1 ? "" : "s"}
-                  <svg viewBox="0 0 16 16" className="h-3 w-3 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                    <path d="M4 6l4 4 4-4" />
-                  </svg>
+                <span className="font-mono text-[10.5px] text-[var(--app-muted)]">
+                  {connectedCount} / {sources.length || 0}
                 </span>
-              </summary>
-              <div className="mt-3 flex flex-col gap-3">
-                {context.themes.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {context.themes.map((theme) => (
-                      <span
-                        key={theme}
-                        className="rounded-full bg-[var(--app-soft)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--app-ink)]"
-                      >
-                        {theme}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {context.bullets.length > 0 && (
-                  <ul className="flex flex-col gap-1 text-[11.5px] leading-snug text-[var(--app-ink)]">
-                    {context.bullets.slice(0, 4).map((bullet, i) => (
-                      <li key={i} className="flex gap-2">
-                        <span aria-hidden className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-[var(--app-accent)]" />
-                        <span>{bullet}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <details className="text-[11px] text-[var(--app-muted)]">
-                  <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.16em]">
-                    Raw context for the agent
-                  </summary>
-                  <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--app-line)] bg-[var(--app-soft)] p-3 text-[11px] leading-relaxed text-[var(--app-ink)]">
-                    {context.body}
-                  </pre>
-                </details>
               </div>
-            </details>
-          )}
-
-          <section className="flex flex-col gap-2 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                Run size
-              </h2>
-              <span className="font-mono text-[10.5px] text-[var(--app-muted)]">
-                {targets.size}/3
-              </span>
-            </div>
-            <div className="flex flex-col">
-              {runSizes.map((option, i) => {
-                const selected = targets.has(option.id as ArtifactKind);
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    role="checkbox"
-                    aria-checked={selected}
-                    onClick={() => toggleTarget(option.id as ArtifactKind)}
+              <ul className="flex flex-col">
+                {sources.length === 0 && !loadingSources && (
+                  <li className="py-3 text-[12px] text-[var(--app-muted)]">
+                    No sources yet — paste a note, drop a voice memo, add a video clip, or connect a Discord or Slack channel.
+                  </li>
+                )}
+                {sources.map((source, i) => (
+                  <li
+                    key={source.id}
                     className={
-                      "group flex items-center justify-between gap-3 py-2 text-left transition-colors " +
+                      "flex items-start gap-3 py-2.5 " +
                       (i !== 0 ? "border-t border-[var(--app-line)]" : "")
                     }
                   >
-                    <div className="flex items-center gap-2.5">
-                      <span
-                        aria-hidden
-                        className={
-                          "grid h-3.5 w-3.5 place-items-center rounded border transition-colors " +
-                          (selected
-                            ? "border-[var(--app-ink)] bg-[var(--app-ink)] text-[var(--app-paper)]"
-                            : "border-[var(--app-line)] group-hover:border-[var(--app-muted)]")
-                        }
+                    <span
+                      aria-hidden
+                      className={
+                        "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full " +
+                        (source.status === "error"
+                          ? "bg-[#c23a2b]"
+                          : "bg-[var(--app-accent)]")
+                      }
+                    />
+                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="truncate text-[12.5px] font-medium text-[var(--app-ink)]">
+                          {source.label}
+                        </span>
+                        <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
+                          {MODALITY_META[source.modality].meta}
+                        </span>
+                      </div>
+                      <p className="truncate text-[11.5px] text-[var(--app-muted)]">
+                        {describeSource(source)}
+                      </p>
+                      {summarizeKeyPhrases(source) && (
+                        <p className="truncate text-[11px] italic text-[var(--app-muted)]">
+                          {summarizeKeyPhrases(source)}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      {source.connector && (
+                        <button
+                          type="button"
+                          onClick={() => refreshSource(source.id)}
+                          disabled={refreshingId === source.id}
+                          aria-label={`Refresh ${source.label}`}
+                          className="grid h-5 w-5 place-items-center rounded-full text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)] hover:text-[var(--app-ink)] disabled:opacity-50"
+                        >
+                          <RefreshCw
+                            className={
+                              "h-3 w-3 " + (refreshingId === source.id ? "animate-spin" : "")
+                            }
+                            aria-hidden
+                          />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => removeSource(source.id)}
+                        className="grid h-5 w-5 place-items-center rounded-full text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)] hover:text-[var(--app-ink)]"
+                        aria-label={`Remove ${source.label}`}
                       >
-                        {selected && (
-                          <svg viewBox="0 0 16 16" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                            <path d="M3 8l3 3 7-7" />
-                          </svg>
+                        <X className="h-2.5 w-2.5" strokeWidth={2.4} />
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {(Object.keys(MODALITY_META) as Modality[]).map((modality) => (
+                  <button
+                    key={modality}
+                    type="button"
+                    onClick={() => openComposer(modality)}
+                    className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[var(--app-line)] px-3 text-[12px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)]"
+                  >
+                    <Plus className="h-3 w-3" aria-hidden />
+                    {MODALITY_META[modality].label}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <details className="group rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4 [&[open]]:pb-3" open={configOpen} onToggle={(event) => setConfigOpen((event.target as HTMLDetailsElement).open)}>
+              <summary className="flex cursor-pointer list-none items-center justify-between outline-none">
+                <h2 className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                  Configuration
+                </h2>
+                <span className="flex items-center gap-2 font-mono text-[10.5px] text-[var(--app-muted)]">
+                  {(writtenSamples.length + (sourceConfig.github.trim() ? 1 : 0))} active
+                  <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" aria-hidden />
+                </span>
+              </summary>
+
+              <div className="mt-3 flex flex-col gap-3">
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <span aria-hidden className="grid h-5 w-5 place-items-center rounded-md bg-[#0f172a] text-white">
+                      <svg viewBox="0 0 16 16" className="h-3 w-3" fill="currentColor" aria-hidden>
+                        <path d="M8 .2a8 8 0 0 0-2.5 15.6c.4.1.5-.2.5-.4v-1.4c-2.2.5-2.7-1-2.7-1-.4-.9-.9-1.2-.9-1.2-.7-.5.1-.5.1-.5.8.1 1.2.8 1.2.8.7 1.2 1.9.9 2.4.7.1-.5.3-.9.5-1.1-1.8-.2-3.6-.9-3.6-3.9 0-.9.3-1.6.8-2.1-.1-.2-.4-1 .1-2.1 0 0 .7-.2 2.2.8a7.7 7.7 0 0 1 4 0c1.5-1 2.2-.8 2.2-.8.5 1.1.2 1.9.1 2.1.5.5.8 1.2.8 2.1 0 3-1.8 3.7-3.6 3.9.3.3.6.8.6 1.6v2.4c0 .2.1.5.5.4A8 8 0 0 0 8 .2z" />
+                      </svg>
+                    </span>
+                    <span className="text-[12.5px] font-medium">GitHub repo</span>
+                  </div>
+                  <label className="flex flex-col gap-1">
+                    <span className="sr-only">GitHub repository</span>
+                    <input
+                      type="text"
+                      value={sourceConfig.github}
+                      onChange={(event) =>
+                        setSourceConfig((prev) => ({ ...prev, github: event.target.value }))
+                      }
+                      placeholder="owner/repo"
+                      className="h-8 w-full rounded-md border border-[var(--app-line)] bg-[var(--app-paper)] px-3 font-mono text-[12px] outline-none transition-colors focus:border-[var(--app-ink)]"
+                    />
+                  </label>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[12.5px] font-medium">Writing samples</span>
+                    <button
+                      type="button"
+                      onClick={addSample}
+                      className="rounded-full border border-[var(--app-line)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-ink)]"
+                    >
+                      + add
+                    </button>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    {sourceConfig.writingSamples.map((sample, idx) => (
+                      <div key={`sample-${idx}`} className="flex flex-col gap-1">
+                        <label className="flex flex-col gap-1">
+                          <span className="sr-only">Writing sample {idx + 1}</span>
+                          <textarea
+                            rows={2}
+                            value={sample}
+                            onChange={(event) => updateSample(idx, event.target.value)}
+                            placeholder={`Paste an example ${idx === 0 ? "newsletter intro" : "post"}…`}
+                            className="w-full resize-none rounded-md border border-[var(--app-line)] bg-[var(--app-paper)] px-3 py-2 text-[12px] leading-snug outline-none transition-colors focus:border-[var(--app-ink)]"
+                          />
+                        </label>
+                        {sourceConfig.writingSamples.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeSample(idx)}
+                            className="self-end font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-accent)]"
+                          >
+                            remove
+                          </button>
                         )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[12.5px] font-medium">Mood</span>
+                    <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
+                      {sourceConfig.mood === "default" ? "default" : "applied"}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {MOOD_OPTIONS.map((m) => {
+                      const selected = sourceConfig.mood === m.id;
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() =>
+                            setSourceConfig((prev) => ({ ...prev, mood: m.id }))
+                          }
+                          aria-pressed={selected}
+                          className={
+                            "flex flex-col items-start gap-0.5 rounded-md border px-2 py-1.5 text-left transition-all " +
+                            (selected
+                              ? "border-[var(--app-ink)] bg-[var(--app-soft)]"
+                              : "border-[var(--app-line)] bg-[var(--app-paper)] hover:border-[var(--app-muted)]")
+                          }
+                        >
+                          <span className="text-[11.5px] font-medium text-[var(--app-ink)]">
+                            {m.label}
+                          </span>
+                          <span className="text-[10px] leading-snug text-[var(--app-muted)]">
+                            {m.hint}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </details>
+
+            {context && context.sourceCount > 0 && (
+              <details className="group rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4 [&[open]]:pb-3" open>
+                <summary className="flex cursor-pointer list-none items-center justify-between outline-none">
+                  <h2 className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                    Ingested context
+                  </h2>
+                  <span className="flex items-center gap-2 font-mono text-[10.5px] text-[var(--app-muted)]">
+                    {context.sourceCount} source{context.sourceCount === 1 ? "" : "s"}
+                    <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" aria-hidden />
+                  </span>
+                </summary>
+                <div className="mt-3 flex flex-col gap-3">
+                  {context.themes.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {context.themes.map((theme) => (
+                        <span
+                          key={theme}
+                          className="rounded-full bg-[var(--app-soft)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--app-ink)]"
+                        >
+                          {theme}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {context.bullets.length > 0 && (
+                    <ul className="flex flex-col gap-1 text-[11.5px] leading-snug text-[var(--app-ink)]">
+                      {context.bullets.slice(0, 4).map((bullet, i) => (
+                        <li key={i} className="flex gap-2">
+                          <span aria-hidden className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-[var(--app-accent)]" />
+                          <span>{bullet}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <details className="text-[11px] text-[var(--app-muted)]">
+                    <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.16em]">
+                      Raw context for the agent
+                    </summary>
+                    <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--app-line)] bg-[var(--app-soft)] p-3 text-[11px] leading-relaxed text-[var(--app-ink)]">
+                      {context.body}
+                    </pre>
+                  </details>
+                </div>
+              </details>
+            )}
+
+            <section className="flex flex-col gap-2 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
+              <div className="flex items-center justify-between">
+                <h2 className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                  Run size
+                </h2>
+                <span className="font-mono text-[10.5px] text-[var(--app-muted)]">
+                  {targets.size}/3
+                </span>
+              </div>
+              <div className="flex flex-col">
+                {runSizes.map((option, i) => {
+                  const selected = targets.has(option.id as ArtifactKind);
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      role="checkbox"
+                      aria-checked={selected}
+                      onClick={() => toggleTarget(option.id as ArtifactKind)}
+                      className={
+                        "group flex items-center justify-between gap-3 py-2 text-left transition-colors " +
+                        (i !== 0 ? "border-t border-[var(--app-line)]" : "")
+                      }
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <span
+                          aria-hidden
+                          className={
+                            "grid h-3.5 w-3.5 place-items-center rounded border transition-colors " +
+                            (selected
+                              ? "border-[var(--app-ink)] bg-[var(--app-ink)] text-[var(--app-paper)]"
+                              : "border-[var(--app-line)] group-hover:border-[var(--app-muted)]")
+                          }
+                        >
+                          {selected && (
+                            <Check className="h-2.5 w-2.5" strokeWidth={3} aria-hidden />
+                          )}
+                        </span>
+                        <span
+                          className={
+                            "text-[12.5px] " +
+                            (selected
+                              ? "font-medium text-[var(--app-ink)]"
+                              : "text-[var(--app-muted)]")
+                          }
+                        >
+                          {option.label}
+                        </span>
+                      </div>
+                      <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
+                        {option.note}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex items-center justify-between gap-2 border-t border-[var(--app-line)] pt-2">
+                <button
+                  type="button"
+                  onClick={() => setTargets(new Set(["newsletter", "linkedin", "x"]))}
+                  className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-ink)]"
+                >
+                  select all
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTargets(new Set())}
+                  className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-ink)]"
+                >
+                  clear
+                </button>
+              </div>
+            </section>
+          </aside>
+
+          <section className="flex flex-col gap-4">
+            {(stages.length > 0 || running) && (
+              <RunProgress
+                stages={stages}
+                running={running}
+                percent={progressPercent(stages)}
+                logs={stageLogs}
+                repo={sourceConfig.github}
+              />
+            )}
+
+            <div
+              role="tablist"
+              aria-label="Artifacts"
+              className="grid gap-2 sm:grid-cols-3"
+            >
+              {artifacts.map((artifact) => {
+                const selected = artifact.id === activeId;
+                return (
+                  <button
+                    key={artifact.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    onClick={() => setActiveId(artifact.id)}
+                    className={
+                      "group relative flex flex-col items-start gap-1 overflow-hidden rounded-2xl border p-3.5 text-left transition-all " +
+                      (selected
+                        ? "border-[var(--app-ink)] bg-[var(--app-panel)] shadow-[0_18px_40px_-28px_rgba(15,23,42,0.45)]"
+                        : "border-[var(--app-line)] bg-[var(--app-panel)]/60 hover:border-[var(--app-muted)]")
+                    }
+                  >
+                    <div className="flex w-full items-center justify-between gap-2">
+                      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                        {artifact.handle}
                       </span>
                       <span
                         className={
-                          "text-[12.5px] " +
-                          (selected
-                            ? "font-medium text-[var(--app-ink)]"
-                            : "text-[var(--app-muted)]")
+                          "shrink-0 font-mono text-[10px] " +
+                          (selected ? "text-[var(--app-ink)]" : "text-[var(--app-muted)]")
                         }
                       >
-                        {option.label}
+                        {artifact.metric}
                       </span>
                     </div>
-                    <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
-                      {option.note}
-                    </span>
+                    <div className="font-serif text-[1.25rem] font-medium leading-[1.05] tracking-[-0.01em] text-[var(--app-ink)]">
+                      {artifact.label}
+                    </div>
+                    <p className="line-clamp-2 text-[11.5px] leading-snug text-[var(--app-muted)]">
+                      {artifact.blurb}
+                    </p>
                   </button>
                 );
               })}
             </div>
-            <div className="flex items-center justify-between gap-2 border-t border-[var(--app-line)] pt-2">
-              <button
-                type="button"
-                onClick={() => setTargets(new Set(["newsletter", "linkedin", "x"]))}
-                className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-ink)]"
-              >
-                select all
-              </button>
-              <button
-                type="button"
-                onClick={() => setTargets(new Set())}
-                className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-ink)]"
-              >
-                clear
-              </button>
-            </div>
-          </section>
-        </aside>
 
-        <section className="flex flex-col gap-4">
-          {(stages.length > 0 || running) && (
-            <RunProgress
-              stages={stages}
-              running={running}
-              percent={progressPercent(stages)}
-              logs={stageLogs}
-              repo={sourceConfig.github}
-            />
-          )}
-
-          <div
-            role="tablist"
-            aria-label="Artifacts"
-            className="grid gap-2 sm:grid-cols-3"
-          >
-            {artifacts.map((artifact) => {
-              const selected = artifact.id === activeId;
-              return (
-                <button
-                  key={artifact.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={selected}
-                  onClick={() => setActiveId(artifact.id)}
-                  className={
-                    "group relative flex flex-col items-start gap-1 overflow-hidden rounded-2xl border p-3.5 text-left transition-all " +
-                    (selected
-                      ? "border-[var(--app-ink)] bg-[var(--app-panel)] shadow-[0_18px_40px_-28px_rgba(15,23,42,0.45)]"
-                      : "border-[var(--app-line)] bg-[var(--app-panel)]/60 hover:border-[var(--app-muted)]")
-                  }
-                >
-                  <div className="flex w-full items-center justify-between gap-2">
+            <article className="flex flex-col overflow-hidden rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)]">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--app-line)] px-4 py-2.5">
+                <div className="flex items-center gap-3">
+                  <div className="flex flex-col">
+                    <span className="text-[12.5px] font-medium text-[var(--app-ink)]">
+                      {active.label} draft
+                    </span>
                     <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                      {artifact.handle}
+                      {active.tone} · {active.metric}
                     </span>
-                    <span
-                      className={
-                        "shrink-0 font-mono text-[10px] " +
-                        (selected ? "text-[var(--app-ink)]" : "text-[var(--app-muted)]")
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRegenerate}
+                    disabled={isGenerating || !targets.has(active.id)}
+                    className="inline-flex h-8 items-center justify-center rounded-full border border-[var(--app-line)] px-3 text-[12px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Regenerate
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (typeof navigator !== "undefined" && navigator.clipboard) {
+                        void navigator.clipboard.writeText(active.body);
                       }
-                    >
-                      {artifact.metric}
-                    </span>
-                  </div>
-                  <div className="font-serif text-[1.25rem] font-medium leading-[1.05] tracking-[-0.01em] text-[var(--app-ink)]">
-                    {artifact.label}
-                  </div>
-                  <p className="line-clamp-2 text-[11.5px] leading-snug text-[var(--app-muted)]">
-                    {artifact.blurb}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
-
-          <article className="flex flex-col overflow-hidden rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)]">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--app-line)] px-4 py-2.5">
-              <div className="flex items-center gap-3">
-                <div className="flex flex-col">
-                  <span className="text-[12.5px] font-medium text-[var(--app-ink)]">
-                    {active.label} draft
-                  </span>
-                  <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                    {active.tone} · {active.metric}
-                  </span>
+                    }}
+                    className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full bg-[var(--app-ink)] px-3 text-[12px] font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px"
+                  >
+                    Copy markdown
+                    <Copy className="h-3 w-3" aria-hidden />
+                  </button>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleRegenerate}
-                  disabled={isGenerating || !targets.has(active.id)}
-                  className="inline-flex h-8 items-center justify-center rounded-full border border-[var(--app-line)] px-3 text-[12px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)] disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Regenerate
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (typeof navigator !== "undefined" && navigator.clipboard) {
-                      void navigator.clipboard.writeText(active.body);
-                    }
-                  }}
-                  className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full bg-[var(--app-ink)] px-3 text-[12px] font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px"
-                >
-                  Copy markdown
-                  <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                    <rect x="5" y="5" width="8" height="8" rx="1.5" />
-                    <path d="M3 11V3.5A.5.5 0 0 1 3.5 3H11" />
-                  </svg>
-                </button>
+              <div className="bg-[var(--app-bg)] px-4 py-8 sm:px-8 sm:py-10">
+                <ChannelPreview
+                  artifact={active}
+                  githubDisplay={githubDisplay}
+                  authorName={authorForKind(active.id)}
+                  authorTitle={titleForKind(active.id)}
+                />
               </div>
-            </div>
-            <div className="bg-[var(--app-bg)] px-4 py-8 sm:px-8 sm:py-10">
-              <ChannelPreview
-                artifact={active}
-                githubDisplay={githubDisplay}
-                authorName={authorForKind(active.id)}
-                authorTitle={titleForKind(active.id)}
-              />
-            </div>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[var(--app-line)] px-4 py-2 font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
-              <span>{githubDisplay}</span>
-              <span className="text-[var(--app-line)]">·</span>
-              <span>{sourceConfig.mood === "default" ? "default tone" : sourceConfig.mood}</span>
-              <span className="text-[var(--app-line)]">·</span>
-              <span>{writtenSamples.length} sample{writtenSamples.length === 1 ? "" : "s"}</span>
-              <span className="text-[var(--app-line)]">·</span>
-              <span>{active.metric}</span>
-              {context && context.sourceCount > 0 && (
-                <>
-                  <span className="text-[var(--app-line)]">·</span>
-                  <span>{context.sourceCount} source{context.sourceCount === 1 ? "" : "s"}</span>
-                </>
-              )}
-              <p className="whitespace-pre-wrap font-serif text-[1.05rem] leading-[1.45] text-[var(--app-ink)] sm:text-[1.15rem]">
-                {active.body}
-              </p>
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-[var(--app-line)] pt-3 font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                <span>Source · week 32</span>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[var(--app-line)] px-4 py-2 font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
+                <span>{githubDisplay}</span>
                 <span className="text-[var(--app-line)]">·</span>
-                <span>Voice · {active.tone.toLowerCase()}</span>
+                <span>{sourceConfig.mood === "default" ? "default tone" : sourceConfig.mood}</span>
                 <span className="text-[var(--app-line)]">·</span>
-                <span>Length · {active.metric}</span>
+                <span>{writtenSamples.length} sample{writtenSamples.length === 1 ? "" : "s"}</span>
+                <span className="text-[var(--app-line)]">·</span>
+                <span>{active.metric}</span>
                 {context && context.sourceCount > 0 && (
                   <>
                     <span className="text-[var(--app-line)]">·</span>
-                    <span>Context · {context.sourceCount} source{context.sourceCount === 1 ? "" : "s"}</span>
+                    <span>{context.sourceCount} source{context.sourceCount === 1 ? "" : "s"}</span>
                   </>
                 )}
-              </div>
-            </div>
-          </article>
-        </section>
-      </div>
-
-      {composer && (
-        <div
-          className="fixed inset-0 z-30 grid place-items-center bg-black/30 p-4 backdrop-blur-sm"
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Add ${composer.kind === "connector" ? MODALITY_META[composer.modality].label : MODALITY_META[composer.modality].label} source`}
-          onClick={(event) => {
-            if (event.target === event.currentTarget) closeComposer();
-          }}
-        >
-          <div className="flex w-full max-w-lg flex-col gap-4 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-5 shadow-[0_30px_80px_-30px_rgba(15,23,42,0.4)]">
-            <div className="flex items-center justify-between">
-              <h3 className="font-serif text-[1.15rem] font-medium tracking-[-0.01em] text-[var(--app-ink)]">
-                Add {composer.kind === "connector" ? MODALITY_META[composer.modality].label : MODALITY_META[composer.modality].label}
-              </h3>
-              <button
-                type="button"
-                onClick={closeComposer}
-                className="grid h-7 w-7 place-items-center rounded-full text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)] hover:text-[var(--app-ink)]"
-                aria-label="Close"
-              >
-                <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 3l10 10M13 3L3 13" />
-                </svg>
-              </button>
-            </div>
-
-            {composer.kind === "connector" ? (
-              <>
-                <p className="text-[11.5px] leading-snug text-[var(--app-muted)]">
-                  {MODALITY_META[composer.modality].help}
+                <p className="whitespace-pre-wrap font-serif text-[1.05rem] leading-[1.45] text-[var(--app-ink)] sm:text-[1.15rem]">
+                  {active.body}
                 </p>
-                <label className="flex flex-col gap-1.5">
-                  <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                    Label
-                  </span>
-                  <input
-                    value={composer.draft.label}
-                    onChange={(event) =>
-                      setComposer((prev) =>
-                        prev && prev.kind === "connector"
-                          ? { ...prev, draft: { ...prev.draft, label: event.target.value } }
-                          : prev,
-                      )
-                    }
-                    placeholder={
-                      composer.draft.modality === "discord"
-                        ? "Discord · #shipping"
-                        : "Slack · #eng-weekly"
-                    }
-                    className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 text-[13px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
-                  />
-                </label>
-                <label className="flex flex-col gap-1.5">
-                  <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                    {composer.draft.modality === "discord" ? "Bot token" : "Bot token (xoxb-…)"}
-                  </span>
-                  <input
-                    type="password"
-                    value={composer.draft.token}
-                    onChange={(event) =>
-                      setComposer((prev) =>
-                        prev && prev.kind === "connector"
-                          ? { ...prev, draft: { ...prev.draft, token: event.target.value } }
-                          : prev,
-                      )
-                    }
-                    placeholder={composer.draft.modality === "discord" ? "MTI0NTY3…" : "xoxb-…"}
-                    autoComplete="off"
-                    className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 font-mono text-[12.5px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
-                  />
-                </label>
-                <label className="flex flex-col gap-1.5">
-                  <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                    Channel id
-                  </span>
-                  <input
-                    value={composer.draft.channelId}
-                    onChange={(event) =>
-                      setComposer((prev) =>
-                        prev && prev.kind === "connector"
-                          ? { ...prev, draft: { ...prev.draft, channelId: event.target.value } }
-                          : prev,
-                      )
-                    }
-                    placeholder={composer.draft.modality === "discord" ? "123456789012345678" : "C0123ABCD"}
-                    className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 font-mono text-[12.5px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
-                  />
-                </label>
-                {composer.draft.modality === "slack" && (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-[var(--app-line)] pt-3 font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                  <span>Source · week 32</span>
+                  <span className="text-[var(--app-line)]">·</span>
+                  <span>Voice · {active.tone.toLowerCase()}</span>
+                  <span className="text-[var(--app-line)]">·</span>
+                  <span>Length · {active.metric}</span>
+                  {context && context.sourceCount > 0 && (
+                    <>
+                      <span className="text-[var(--app-line)]">·</span>
+                      <span>Context · {context.sourceCount} source{context.sourceCount === 1 ? "" : "s"}</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            </article>
+          </section>
+        </div>
+
+        {composer && (
+          <div
+            className="fixed inset-0 z-30 grid place-items-center bg-black/30 p-4 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Add ${composer.kind === "connector" ? MODALITY_META[composer.modality].label : MODALITY_META[composer.modality].label} source`}
+            onClick={(event) => {
+              if (event.target === event.currentTarget) closeComposer();
+            }}
+          >
+            <div className="flex w-full max-w-lg flex-col gap-4 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-5 shadow-[0_30px_80px_-30px_rgba(15,23,42,0.4)]">
+              <div className="flex items-center justify-between">
+                <h3 className="font-serif text-[1.15rem] font-medium tracking-[-0.01em] text-[var(--app-ink)]">
+                  Add {composer.kind === "connector" ? MODALITY_META[composer.modality].label : MODALITY_META[composer.modality].label}
+                </h3>
+                <button
+                  type="button"
+                  onClick={closeComposer}
+                  className="grid h-7 w-7 place-items-center rounded-full text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)] hover:text-[var(--app-ink)]"
+                  aria-label="Close"
+                >
+                  <X className="h-3 w-3" strokeWidth={2.4} />
+                </button>
+              </div>
+
+              {composer.kind === "connector" ? (
+                <>
+                  <p className="text-[11.5px] leading-snug text-[var(--app-muted)]">
+                    {MODALITY_META[composer.modality].help}
+                  </p>
                   <label className="flex flex-col gap-1.5">
                     <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                      Workspace <span className="text-[var(--app-muted)]/70 normal-case tracking-normal">(optional)</span>
+                      Label
                     </span>
                     <input
-                      value={composer.draft.workspace ?? ""}
+                      value={composer.draft.label}
                       onChange={(event) =>
                         setComposer((prev) =>
                           prev && prev.kind === "connector"
-                            ? { ...prev, draft: { ...prev.draft, workspace: event.target.value } }
+                            ? { ...prev, draft: { ...prev.draft, label: event.target.value } }
                             : prev,
                         )
                       }
-                      placeholder="acme-co"
+                      placeholder={
+                        composer.draft.modality === "discord"
+                          ? "Discord · #shipping"
+                          : "Slack · #eng-weekly"
+                      }
                       className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 text-[13px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
                     />
                   </label>
-                )}
-                <label className="flex flex-col gap-1.5">
-                  <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                    Messages to pull
-                  </span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={200}
-                    value={composer.draft.limit}
-                    onChange={(event) =>
-                      setComposer((prev) =>
-                        prev && prev.kind === "connector"
-                          ? {
+                  <label className="flex flex-col gap-1.5">
+                    <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                      {composer.draft.modality === "discord" ? "Bot token" : "Bot token (xoxb-…)"}
+                    </span>
+                    <input
+                      type="password"
+                      value={composer.draft.token}
+                      onChange={(event) =>
+                        setComposer((prev) =>
+                          prev && prev.kind === "connector"
+                            ? { ...prev, draft: { ...prev.draft, token: event.target.value } }
+                            : prev,
+                        )
+                      }
+                      placeholder={composer.draft.modality === "discord" ? "MTI0NTY3…" : "xoxb-…"}
+                      autoComplete="off"
+                      className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 font-mono text-[12.5px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                      Channel id
+                    </span>
+                    <input
+                      value={composer.draft.channelId}
+                      onChange={(event) =>
+                        setComposer((prev) =>
+                          prev && prev.kind === "connector"
+                            ? { ...prev, draft: { ...prev.draft, channelId: event.target.value } }
+                            : prev,
+                        )
+                      }
+                      placeholder={composer.draft.modality === "discord" ? "123456789012345678" : "C0123ABCD"}
+                      className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 font-mono text-[12.5px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
+                    />
+                  </label>
+                  {composer.draft.modality === "slack" && (
+                    <label className="flex flex-col gap-1.5">
+                      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                        Workspace <span className="text-[var(--app-muted)]/70 normal-case tracking-normal">(optional)</span>
+                      </span>
+                      <input
+                        value={composer.draft.workspace ?? ""}
+                        onChange={(event) =>
+                          setComposer((prev) =>
+                            prev && prev.kind === "connector"
+                              ? { ...prev, draft: { ...prev.draft, workspace: event.target.value } }
+                              : prev,
+                          )
+                        }
+                        placeholder="acme-co"
+                        className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 text-[13px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
+                      />
+                    </label>
+                  )}
+                  <label className="flex flex-col gap-1.5">
+                    <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                      Messages to pull
+                    </span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={200}
+                      value={composer.draft.limit}
+                      onChange={(event) =>
+                        setComposer((prev) =>
+                          prev && prev.kind === "connector"
+                            ? {
                               ...prev,
                               draft: {
                                 ...prev.draft,
                                 limit: Math.max(1, Math.min(200, Number(event.target.value) || 1)),
                               },
                             }
-                          : prev,
-                      )
-                    }
-                    className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 font-mono text-[12.5px] text-[var(--app-ink)] outline-none transition-colors focus:border-[var(--app-ink)]"
-                  />
-                </label>
-              </>
-            ) : (
-              <>
-                <label className="flex flex-col gap-1.5">
-                  <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                    Label
-                  </span>
-                  <input
-                    value={composer.label}
-                    onChange={(event) => setComposer({ ...composer, label: event.target.value })}
-                    placeholder={composer.modality === "text" ? "Brief, kickoff notes, sponsor email…" : "Voice memo, demo recording…"}
-                    className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 text-[13px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
-                  />
-                </label>
-
-                {composer.modality === "text" ? (
-                  <label className="flex flex-col gap-1.5">
-                    <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                      Text
-                    </span>
-                    <textarea
-                      value={composer.text}
-                      onChange={(event) => setComposer({ ...composer, text: event.target.value })}
-                      placeholder={MODALITY_META.text.placeholder}
-                      rows={8}
-                      className="resize-y rounded-xl border border-[var(--app-line)] bg-transparent p-3 text-[13px] leading-relaxed text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
+                            : prev,
+                        )
+                      }
+                      className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 font-mono text-[12.5px] text-[var(--app-ink)] outline-none transition-colors focus:border-[var(--app-ink)]"
                     />
                   </label>
-                ) : (
-                  <div className="flex flex-col gap-2">
+                </>
+              ) : (
+                <>
+                  <label className="flex flex-col gap-1.5">
                     <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                      File
+                      Label
                     </span>
-                    <button
-                      type="button"
-                      onClick={triggerFilePicker}
-                      className="flex flex-col items-start gap-1 rounded-xl border border-dashed border-[var(--app-line)] bg-[var(--app-soft)]/60 px-4 py-5 text-left transition-colors hover:border-[var(--app-ink)]"
-                    >
-                      <span className="text-[13px] font-medium text-[var(--app-ink)]">
-                        {pendingFile ? pendingFile.file.name : MODALITY_META[composer.modality].placeholder}
-                      </span>
-                      <span className="text-[11px] text-[var(--app-muted)]">
-                        {pendingFile
-                          ? `${formatBytes(pendingFile.file.size)} · ${pendingFile.file.type || "unknown"}`
-                          : "Click to pick a file from your computer"}
-                      </span>
-                    </button>
                     <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept={MODALITY_META[composer.modality].accept}
-                      className="hidden"
-                      onChange={(event) => handleFile(event.target.files?.[0] ?? null)}
+                      value={composer.label}
+                      onChange={(event) => setComposer({ ...composer, label: event.target.value })}
+                      placeholder={composer.modality === "text" ? "Brief, kickoff notes, sponsor email…" : "Voice memo, demo recording…"}
+                      className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 text-[13px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
                     />
-                  </div>
-                )}
-              </>
-            )}
+                  </label>
 
-            {feedback && (
-              <p
-                className={
-                  "text-[11.5px] " +
-                  (feedback === "added" ? "text-[var(--positive)]" : "text-[#c23a2b]")
-                }
-              >
-                {feedback === "added" ? "Added to your sources." : feedback}
-              </p>
-            )}
-
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={closeComposer}
-                className="inline-flex h-9 items-center justify-center rounded-full border border-[var(--app-line)] px-4 text-[12px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)]"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={submitComposer}
-                disabled={adding}
-                className="inline-flex h-9 items-center justify-center gap-2 rounded-full bg-[var(--app-ink)] px-4 text-[12px] font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px disabled:opacity-50"
-              >
-                {adding ? "Connecting…" : composer.kind === "connector" ? "Connect" : "Ingest"}
-                <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                  <path d="M3 8h10M9 4l4 4-4 4" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </main>
-  );
-}
-
-function authorForKind(kind: ArtifactKind): string {
-  if (kind === "newsletter") return "Multimail Team";
-  if (kind === "linkedin") return "M. Kapoor";
-  return "polar-relay";
-}
-
-function titleForKind(kind: ArtifactKind): string {
-  if (kind === "newsletter") return "Polar Relay · weekly";
-  if (kind === "linkedin") return "Founder · Polar Relay · weekly build notes";
-  return "· engineering at Polar Relay";
-}
-
-function ChannelPreview({
-  artifact,
-  authorName,
-  authorTitle,
-  githubDisplay,
-}: {
-  artifact: Artifact;
-  authorName?: string;
-  authorTitle?: string;
-  githubDisplay?: string;
-}) {
-  if (artifact.id === "newsletter") {
-    return (
-      <div className="mx-auto max-w-2xl">
-        <NewsletterPreview body={artifact.body} author={authorName} week={githubDisplay} />
-        {!artifact.generated && (
-          <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-            Run the week to generate a draft.
-          </p>
-        )}
-        {artifact.imageDataUrl && (
-          <div className="mx-auto mt-4 max-w-2xl overflow-hidden rounded-xl border border-[var(--app-line)]">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={artifact.imageDataUrl}
-              alt={`${artifact.label} generated image`}
-              className="block w-full"
-            />
-          </div>
-        )}
-      </div>
-    );
-  }
-  if (artifact.id === "linkedin") {
-    return (
-      <div className="mx-auto max-w-xl">
-        <LinkedInPreview body={artifact.body} authorName={authorName} authorTitle={authorTitle} />
-        {!artifact.generated && (
-          <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-            Run the week to generate a draft.
-          </p>
-        )}
-        {artifact.imageDataUrl && (
-          <div className="mx-auto mt-4 max-w-xl overflow-hidden rounded-xl border border-[var(--app-line)]">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={artifact.imageDataUrl}
-              alt={`${artifact.label} generated image`}
-              className="block w-full"
-            />
-          </div>
-        )}
-      </div>
-    );
-  }
-  return (
-    <div className="mx-auto max-w-lg">
-      <XPreview body={artifact.body} authorName={authorName} authorHandle="polar_relay" />
-      {!artifact.generated && (
-        <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-          Run the week to generate a draft.
-        </p>
-      )}
-      {artifact.imageDataUrl && (
-        <div className="mx-auto mt-4 max-w-lg overflow-hidden rounded-xl border border-[var(--app-line)]">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={artifact.imageDataUrl}
-            alt={`${artifact.label} generated image`}
-            className="block w-full"
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function RunProgress({
-  stages,
-  running,
-  percent,
-  logs,
-  repo,
-}: {
-  stages: Stage[];
-  running: boolean;
-  percent: number;
-  logs: string[];
-  repo: string;
-}) {
-  const grouped = GROUP_ORDER.map((group) => ({
-    group,
-    items: stages.filter((s) => s.group === group),
-  }));
-  const overallLabel = running
-    ? "Running the week"
-    : percent >= 100
-      ? "Week complete"
-      : "Paused";
-  const currentGroup = GROUP_ORDER.find((g) =>
-    stages.some((s) => s.group === g && s.status === "running"),
-  );
-
-  return (
-    <section
-      aria-label="Run progress"
-      className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4"
-    >
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex flex-col gap-0.5">
-          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-            {repo || "GitHub"} · {overallLabel}
-          </span>
-          <span className="font-serif text-[1.1rem] font-medium tracking-[-0.01em] text-[var(--app-ink)]">
-            {currentGroup ? `${GROUP_LABEL[currentGroup]}…` : overallLabel}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[11px] tabular-nums text-[var(--app-muted)]">
-            {percent}%
-          </span>
-          <span
-            aria-hidden
-            className={
-              "h-1.5 w-1.5 rounded-full " +
-              (running
-                ? "bg-[var(--app-accent)] animate-pulse"
-                : percent >= 100
-                  ? "bg-[var(--positive)]"
-                  : "bg-[var(--app-muted)]")
-            }
-          />
-        </div>
-      </div>
-
-      <div
-        role="progressbar"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={percent}
-        className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--app-soft)]"
-      >
-        <div
-          className="h-full rounded-full bg-[var(--app-ink)] transition-[width] duration-300"
-          style={{ width: `${percent}%` }}
-        />
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-3">
-        {grouped.map(({ group, items }) => (
-          <div
-            key={group}
-            className="flex flex-col gap-1.5 rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)]/40 p-3"
-          >
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                {GROUP_LABEL[group]}
-              </span>
-              <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
-                {items.filter((s) => s.status === "done").length}/{items.length}
-              </span>
-            </div>
-            <ul className="flex flex-col gap-1">
-              {items.map((stage) => (
-                <li key={stage.id} className="flex items-start gap-2 text-[11.5px]">
-                  <StageDot status={stage.status} />
-                  <div className="flex min-w-0 flex-1 flex-col">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span
-                        className={
-                          "truncate " +
-                          (stage.status === "done"
-                            ? "text-[var(--app-ink)]"
-                            : stage.status === "error"
-                              ? "text-[#c23a2b]"
-                              : stage.status === "running"
-                                ? "text-[var(--app-ink)]"
-                                : "text-[var(--app-muted)]")
-                        }
-                      >
-                        {stage.label}
+                  {composer.modality === "text" ? (
+                    <label className="flex flex-col gap-1.5">
+                      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                        Text
                       </span>
-                      {typeof stage.ms === "number" && stage.ms > 0 && (
-                        <span className="shrink-0 font-mono text-[10px] tabular-nums text-[var(--app-muted)]">
-                          {(stage.ms / 1000).toFixed(1)}s
+                      <textarea
+                        value={composer.text}
+                        onChange={(event) => setComposer({ ...composer, text: event.target.value })}
+                        placeholder={MODALITY_META.text.placeholder}
+                        rows={8}
+                        className="resize-y rounded-xl border border-[var(--app-line)] bg-transparent p-3 text-[13px] leading-relaxed text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
+                      />
+                    </label>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                        File
+                      </span>
+                      <button
+                        type="button"
+                        onClick={triggerFilePicker}
+                        className="flex flex-col items-start gap-1 rounded-xl border border-dashed border-[var(--app-line)] bg-[var(--app-soft)]/60 px-4 py-5 text-left transition-colors hover:border-[var(--app-ink)]"
+                      >
+                        <span className="text-[13px] font-medium text-[var(--app-ink)]">
+                          {pendingFile ? pendingFile.file.name : MODALITY_META[composer.modality].placeholder}
+                        </span>
+                        <span className="text-[11px] text-[var(--app-muted)]">
+                          {pendingFile
+                            ? `${formatBytes(pendingFile.file.size)} · ${pendingFile.file.type || "unknown"}`
+                            : "Click to pick a file from your computer"}
+                        </span>
+                      </button>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept={MODALITY_META[composer.modality].accept}
+                        className="hidden"
+                        onChange={(event) => handleFile(event.target.files?.[0] ?? null)}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+
+              {feedback && (
+                <p
+                  className={
+                    "text-[11.5px] " +
+                    (feedback === "added" ? "text-[var(--positive)]" : "text-[#c23a2b]")
+                  }
+                >
+                  {feedback === "added" ? "Added to your sources." : feedback}
+                </p>
+              )}
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={closeComposer}
+                  className="inline-flex h-9 items-center justify-center rounded-full border border-[var(--app-line)] px-4 text-[12px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={submitComposer}
+                  disabled={adding}
+                  className="inline-flex h-9 items-center justify-center gap-2 rounded-full bg-[var(--app-ink)] px-4 text-[12px] font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px disabled:opacity-50"
+                >
+                  {adding ? "Connecting…" : composer.kind === "connector" ? "Connect" : "Ingest"}
+                  <ArrowRight className="h-3 w-3" aria-hidden />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+    );
+  }
+
+  function authorForKind(kind: ArtifactKind): string {
+    if (kind === "newsletter") return "Multimail Team";
+    if (kind === "linkedin") return "M. Kapoor";
+    return "polar-relay";
+  }
+
+  function titleForKind(kind: ArtifactKind): string {
+    if (kind === "newsletter") return "Polar Relay · weekly";
+    if (kind === "linkedin") return "Founder · Polar Relay · weekly build notes";
+    return "· engineering at Polar Relay";
+  }
+
+  function ChannelPreview({
+    artifact,
+    authorName,
+    authorTitle,
+    githubDisplay,
+  }: {
+    artifact: Artifact;
+    authorName?: string;
+    authorTitle?: string;
+    githubDisplay?: string;
+  }) {
+    if (artifact.id === "newsletter") {
+      return (
+        <div className="mx-auto max-w-2xl">
+          <NewsletterPreview body={artifact.body} author={authorName} week={githubDisplay} />
+          {!artifact.generated && (
+            <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+              Run the week to generate a draft.
+            </p>
+          )}
+          {artifact.imageDataUrl && (
+            <div className="mx-auto mt-4 max-w-2xl overflow-hidden rounded-xl border border-[var(--app-line)]">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={artifact.imageDataUrl}
+                alt={`${artifact.label} generated image`}
+                className="block w-full"
+              />
+            </div>
+          )}
+        </div>
+      );
+    }
+    if (artifact.id === "linkedin") {
+      return (
+        <div className="mx-auto max-w-xl">
+          <LinkedInPreview body={artifact.body} authorName={authorName} authorTitle={authorTitle} />
+          {!artifact.generated && (
+            <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+              Run the week to generate a draft.
+            </p>
+          )}
+          {artifact.imageDataUrl && (
+            <div className="mx-auto mt-4 max-w-xl overflow-hidden rounded-xl border border-[var(--app-line)]">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={artifact.imageDataUrl}
+                alt={`${artifact.label} generated image`}
+                className="block w-full"
+              />
+            </div>
+          )}
+        </div>
+      );
+    }
+    return (
+      <div className="mx-auto max-w-lg">
+        <XPreview body={artifact.body} authorName={authorName} authorHandle="polar_relay" />
+        {!artifact.generated && (
+          <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+            Run the week to generate a draft.
+          </p>
+        )}
+        {artifact.imageDataUrl && (
+          <div className="mx-auto mt-4 max-w-lg overflow-hidden rounded-xl border border-[var(--app-line)]">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={artifact.imageDataUrl}
+              alt={`${artifact.label} generated image`}
+              className="block w-full"
+            />
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function RunProgress({
+    stages,
+    running,
+    percent,
+    logs,
+    repo,
+  }: {
+    stages: Stage[];
+    running: boolean;
+    percent: number;
+    logs: string[];
+    repo: string;
+  }) {
+    const grouped = GROUP_ORDER.map((group) => ({
+      group,
+      items: stages.filter((s) => s.group === group),
+    }));
+    const overallLabel = running
+      ? "Running the week"
+      : percent >= 100
+        ? "Week complete"
+        : "Paused";
+    const currentGroup = GROUP_ORDER.find((g) =>
+      stages.some((s) => s.group === g && s.status === "running"),
+    );
+
+    return (
+      <section
+        aria-label="Run progress"
+        className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col gap-0.5">
+            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+              {repo || "GitHub"} · {overallLabel}
+            </span>
+            <span className="font-serif text-[1.1rem] font-medium tracking-[-0.01em] text-[var(--app-ink)]">
+              {currentGroup ? `${GROUP_LABEL[currentGroup]}…` : overallLabel}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[11px] tabular-nums text-[var(--app-muted)]">
+              {percent}%
+            </span>
+            <span
+              aria-hidden
+              className={
+                "h-1.5 w-1.5 rounded-full " +
+                (running
+                  ? "bg-[var(--app-accent)] animate-pulse"
+                  : percent >= 100
+                    ? "bg-[var(--positive)]"
+                    : "bg-[var(--app-muted)]")
+              }
+            />
+          </div>
+        </div>
+
+        <div
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={percent}
+          className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--app-soft)]"
+        >
+          <div
+            className="h-full rounded-full bg-[var(--app-ink)] transition-[width] duration-300"
+            style={{ width: `${percent}%` }}
+          />
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          {grouped.map(({ group, items }) => (
+            <div
+              key={group}
+              className="flex flex-col gap-1.5 rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)]/40 p-3"
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                  {GROUP_LABEL[group]}
+                </span>
+                <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
+                  {items.filter((s) => s.status === "done").length}/{items.length}
+                </span>
+              </div>
+              <ul className="flex flex-col gap-1">
+                {items.map((stage) => (
+                  <li key={stage.id} className="flex items-start gap-2 text-[11.5px]">
+                    <StageDot status={stage.status} />
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span
+                          className={
+                            "truncate " +
+                            (stage.status === "done"
+                              ? "text-[var(--app-ink)]"
+                              : stage.status === "error"
+                                ? "text-[#c23a2b]"
+                                : stage.status === "running"
+                                  ? "text-[var(--app-ink)]"
+                                  : "text-[var(--app-muted)]")
+                          }
+                        >
+                          {stage.label}
+                        </span>
+                        {typeof stage.ms === "number" && stage.ms > 0 && (
+                          <span className="shrink-0 font-mono text-[10px] tabular-nums text-[var(--app-muted)]">
+                            {(stage.ms / 1000).toFixed(1)}s
+                          </span>
+                        )}
+                      </div>
+                      {stage.detail && (
+                        <span className="truncate font-mono text-[10px] text-[var(--app-muted)]">
+                          {stage.detail}
                         </span>
                       )}
                     </div>
-                    {stage.detail && (
-                      <span className="truncate font-mono text-[10px] text-[var(--app-muted)]">
-                        {stage.detail}
-                      </span>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
-      </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
 
-      {logs.length > 0 && (
-        <details className="text-[11px] text-[var(--app-muted)]">
-          <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.16em]">
-            Live log ({logs.length})
-          </summary>
-          <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--app-line)] bg-[var(--app-soft)] p-3 text-[11px] leading-relaxed text-[var(--app-ink)]">
-            {logs.slice(-30).join("\n")}
-          </pre>
-        </details>
-      )}
-    </section>
-  );
-}
+        {logs.length > 0 && (
+          <details className="text-[11px] text-[var(--app-muted)]">
+            <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.16em]">
+              Live log ({logs.length})
+            </summary>
+            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--app-line)] bg-[var(--app-soft)] p-3 text-[11px] leading-relaxed text-[var(--app-ink)]">
+              {logs.slice(-30).join("\n")}
+            </pre>
+          </details>
+        )}
+      </section>
+    );
+  }
 
 function StageDot({ status }: { status: StageStatus }) {
   const base = "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full";

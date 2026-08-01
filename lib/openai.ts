@@ -6,12 +6,14 @@ import {
   type AgentOutputItem,
   type RunItem,
 } from "@openai/agents";
+import OpenAI from "openai";
 import { SAMPLE_WEEK, summarizeSource, type WeeklySource } from "./sample-week";
 
 export const TEXT_MODEL = "gpt-5";
 export const IMAGE_MODEL = "gpt-image-1";
 
 let configured = false;
+let cachedClient: OpenAI | null = null;
 
 function ensureConfigured(): void {
   if (configured) return;
@@ -20,7 +22,16 @@ function ensureConfigured(): void {
     throw new Error("OPENAI_KEY is not set in the environment");
   }
   setDefaultOpenAIKey(apiKey);
+  cachedClient = new OpenAI({ apiKey });
   configured = true;
+}
+
+function getOpenAIClient(): OpenAI {
+  ensureConfigured();
+  if (!cachedClient) {
+    throw new Error("OpenAI client failed to initialize");
+  }
+  return cachedClient;
 }
 
 export function getSource(source?: WeeklySource): WeeklySource {
@@ -109,11 +120,7 @@ export async function generateTextDraft(
     messages: [
       {
         role: "system",
-        content:
-          "You write matched drafts for a small dev team's weekly update. " +
-          "You only use information present in the supplied source data. " +
-          "You never invent partner names, metrics, or testimonials. " +
-          "You avoid em dashes; use hyphens, colons, or rewrite instead.",
+        content: AUDIENCE_INSTRUCTIONS,
       },
       {
         role: "user",
@@ -131,6 +138,63 @@ export async function generateTextDraft(
   const text = completion.choices[0]?.message?.content?.trim();
   if (!text) throw new Error(`Empty response from ${TEXT_MODEL}`);
   return text.replace(/—/g, "-");
+}
+
+function imageAgent(): Agent {
+  return new Agent({
+    name: "image-agent",
+    model: TEXT_MODEL,
+    instructions:
+      "Generate a single image that matches the user's prompt using the image_generation tool. Do not write any text.",
+    tools: [
+      imageGenerationTool({
+        model: IMAGE_MODEL,
+      }),
+    ],
+  });
+}
+
+function extractBase64Image(result: unknown): { base64: string } {
+  const items = (
+    result as { newItems?: Array<{ rawItem?: unknown }> }
+  )?.newItems;
+  if (!Array.isArray(items)) {
+    throw new Error("Image generation failed: no run items returned");
+  }
+  for (const runItem of items) {
+    const raw = runItem?.rawItem as
+      | { type?: string; name?: string; output?: string; result?: string }
+      | undefined;
+    if (!raw || raw.type !== "hosted_tool_call") continue;
+    if (raw.name && raw.name !== "image_generation") continue;
+    const output = raw.output ?? raw.result;
+    if (typeof output !== "string" || output.length === 0) continue;
+    const base64 = parseImageOutput(output);
+    if (base64) return { base64 };
+  }
+  throw new Error("Image generation failed: no image output found");
+}
+
+function parseImageOutput(output: string): string | null {
+  const trimmed = output.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed) as {
+        result?: string;
+        output?: string;
+        b64_json?: string;
+      };
+      const candidate =
+        parsed.result ?? parsed.output ?? parsed.b64_json ?? null;
+      if (typeof candidate === "string" && candidate.length > 0) {
+        return candidate;
+      }
+    } catch {
+      // fall through and treat as raw base64
+    }
+  }
+  return trimmed;
 }
 
 export async function generateImage(

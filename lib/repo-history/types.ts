@@ -46,6 +46,11 @@ export type RepoHistoryArtifacts = {
 export type RepoHistoryResult = {
   meta: RepoHistoryMeta;
   artifacts: RepoHistoryArtifacts;
+  data: {
+    shape: import("./phase1").Phase1Shape;
+    structure: import("./phase2").Phase2Structure;
+    narrative: import("./phase3").Phase3Narrative;
+  };
   phases: {
     clone: { ms: number; detail: string };
     shape: { ms: number; detail: string };

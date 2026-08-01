@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Menu } from "lucide-react";
 
 export function SiteHeader() {
   const pathname = usePathname();
@@ -24,17 +25,7 @@ export function SiteHeader() {
           aria-label="Multimail home"
           className="flex items-center gap-2 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-4"
         >
-          <svg
-            aria-hidden
-            viewBox="0 0 20 20"
-            className="h-5 w-5"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-          >
-            <path d="M3 5h14M3 10h10M3 15h14" />
-          </svg>
+          <Menu aria-hidden className="h-5 w-5" strokeWidth={1.8} />
           <span className="font-serif text-lg font-medium tracking-[-0.025em]">
             Multimail
           </span>

@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { Heart, MessageCircle, Repeat2, Send } from "lucide-react";
 import { Markdown } from "./Markdown";
 
 type Props = {
@@ -96,17 +97,16 @@ function Reaction({ aria }: { aria: string }) {
 }
 
 function IconAction({ label }: { label: string }) {
-  const icon: Record<string, string> = {
-    Like: "M14 9V5a3 3 0 0 0-3-3l-1 4 4 3Zm0 0H4v8h10l2-3",
-    Comment: "M3 5h10v6H6l-3 3z",
-    Repost: "M4 8V5l-3 3 3 3v-3h7M12 11v3l3-3-3-3v3H5",
-    Send: "M2 8l12-6-4 14-3-6-5-2z",
-  };
+  const icons = {
+    Like: Heart,
+    Comment: MessageCircle,
+    Repost: Repeat2,
+    Send: Send,
+  } as const;
+  const Icon = icons[label as keyof typeof icons] ?? Heart;
   return (
     <button type="button" className="flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-2 text-[12.5px] hover:bg-[#f3f6f8]">
-      <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <path d={icon[label] ?? ""} />
-      </svg>
+      <Icon className="h-4 w-4" strokeWidth={1.6} aria-hidden />
       {label}
     </button>
   );

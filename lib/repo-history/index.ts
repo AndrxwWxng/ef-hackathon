@@ -169,6 +169,7 @@ export async function generateRepoHistory(
   return {
     meta,
     artifacts,
+    data: { shape: phase1, structure: phase2, narrative: phase3 },
     phases: {
       clone: { ms: phaseTimers.clone.ms, detail: clone.cloneDir },
       shape: { ms: phaseTimers.shape.ms, detail: `${phase1.dayHistogram.length} day buckets` },
