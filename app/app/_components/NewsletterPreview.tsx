@@ -12,33 +12,40 @@ export function NewsletterPreview({ body, week, author }: Props) {
     year: "numeric",
   });
   return (
-    <div className="overflow-hidden rounded-xl border border-[var(--app-line)] bg-white text-[#1f2937] shadow-[0_24px_60px_-44px_rgba(15,23,42,0.35)]">
-      <div className="border-b border-[#e5e7eb] bg-[#f8fafc] px-6 py-3">
-        <div className="flex items-center justify-between font-mono text-[11px] uppercase tracking-[0.16em] text-[#64748b]">
-          <span>Sponsor Dispatch</span>
-          <span>Issue · {dateLine}</span>
+    <div className="w-[640px] max-w-full overflow-hidden rounded-xl border border-black/[0.08] bg-white text-[#1f2937] shadow-[0_24px_60px_-44px_rgba(15,23,42,0.35)]">
+      <div className="flex items-center justify-between border-b border-black/[0.06] bg-white px-6 py-3">
+        <div className="flex items-center gap-2">
+          <svg viewBox="0 0 16 16" className="h-4 w-4 text-[#0a0a0a]" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+            <rect x="2" y="3.5" width="12" height="9" rx="1.5" />
+            <path d="m2.5 4.5 5.5 4 5.5-4" />
+          </svg>
+          <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-[#5e5e5e]">
+            Email preview
+          </span>
         </div>
+        <span className="font-mono text-[10.5px] text-[#5e5e5e]">Issue · {dateLine}</span>
       </div>
-      <div className="mx-auto max-w-[640px] px-8 py-10 sm:px-12 sm:py-14">
-        <div className="font-mono text-[11px] uppercase tracking-[0.2em] text-[#9ca3af]">
+
+      <div className="px-8 py-10 sm:px-12 sm:py-12">
+        <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-[#9ca3af]">
           Polar Relay · weekly
         </div>
-        <h1 className="mt-3 font-serif text-[2rem] font-semibold leading-[1.1] tracking-[-0.01em] text-[#0f172a] sm:text-[2.4rem]">
+        <h1 className="mt-3 text-[1.9rem] font-semibold leading-[1.1] tracking-[-0.02em] text-[#0a0a0a] sm:text-[2.1rem]">
           Sponsor dispatch
         </h1>
-        <div className="mt-2 flex items-center gap-3 font-mono text-[11px] uppercase tracking-[0.18em] text-[#94a3b8]">
+        <div className="mt-2 flex items-center gap-2 text-[11.5px] text-[#9ca3af]">
           <span>{dateLine}</span>
-          <span>·</span>
+          <span aria-hidden>·</span>
           <span>{author ?? "Multimail Team"}</span>
         </div>
-        <hr className="my-8 border-t border-[#e5e7eb]" />
-        <article className="font-serif text-[1.05rem] leading-[1.7] text-[#1f2937]">
+        <hr className="my-7 border-t border-black/[0.08]" />
+        <article className="text-[1.02rem] leading-[1.7] text-[#1f2937]">
           <MarkdownLite source={body} />
         </article>
-        <hr className="my-10 border-t border-[#e5e7eb]" />
-        <footer className="flex flex-col gap-2 font-sans text-[12px] text-[#64748b]">
+        <hr className="my-9 border-t border-black/[0.08]" />
+        <footer className="flex flex-col gap-1 text-[11.5px] text-[#6b7280]">
           <div>You are receiving this because you sponsor Polar Relay.</div>
-          <div className="font-mono uppercase tracking-[0.18em]">© Polar Relay · {new Date().getFullYear()}</div>
+          <div className="font-mono uppercase tracking-[0.12em]">© Polar Relay · {new Date().getFullYear()}</div>
         </footer>
       </div>
     </div>
@@ -54,25 +61,25 @@ function MarkdownLite({ source }: { source: string }) {
         if (block.kind === "heading") {
           if (block.level === 1)
             return (
-              <h1 key={key} className="mt-6 text-[1.7rem] font-semibold leading-[1.15] tracking-[-0.01em] text-[#0f172a]">
+              <h1 key={key} className="mt-5 text-[1.55rem] font-semibold leading-[1.15] tracking-[-0.01em] text-[#0a0a0a]">
                 {block.text}
               </h1>
             );
           if (block.level === 2)
             return (
-              <h2 key={key} className="mt-7 text-[1.3rem] font-semibold leading-tight tracking-[-0.01em] text-[#0f172a]">
+              <h2 key={key} className="mt-6 text-[1.2rem] font-semibold leading-tight tracking-[-0.01em] text-[#0a0a0a]">
                 {block.text}
               </h2>
             );
           return (
-            <h3 key={key} className="mt-5 text-[1.1rem] font-semibold leading-snug text-[#0f172a]">
+            <h3 key={key} className="mt-4 text-[1.05rem] font-semibold leading-snug text-[#0a0a0a]">
               {block.text}
             </h3>
           );
         }
         if (block.kind === "paragraph") {
           return (
-            <p key={key} className="my-3">
+            <p key={key} className="my-2.5">
               {renderLiteInline(block.text)}
             </p>
           );
@@ -96,12 +103,12 @@ function MarkdownLite({ source }: { source: string }) {
         }
         if (block.kind === "quote") {
           return (
-            <blockquote key={key} className="my-4 border-l-4 border-[#94a3b8] pl-4 text-[#475569]">
+            <blockquote key={key} className="my-4 border-l-2 border-[#94a3b8] pl-4 text-[#475569]">
               {block.text}
             </blockquote>
           );
         }
-        return <hr key={key} className="my-6 border-t border-[#e5e7eb]" />;
+        return <hr key={key} className="my-6 border-t border-black/[0.08]" />;
       })}
     </>
   );

@@ -1,4 +1,3 @@
-import { BadgeCheck, Eye, Heart, MessageCircle, Repeat2, Share } from "lucide-react";
 import { Markdown } from "./Markdown";
 
 type Props = {
@@ -10,26 +9,43 @@ type Props = {
 export function XPreview({ body, authorName, authorHandle }: Props) {
   const trimmed = body.trim();
   const charCount = trimmed.length;
+  const overLimit = charCount > 280;
+
   return (
-    <div className="overflow-hidden rounded-xl border border-black/10 bg-black text-[#e7e9ea] shadow-[0_24px_60px_-44px_rgba(0,0,0,0.6)]">
-      <div className="border-b border-[#2f3336] bg-black px-4 py-2">
-        <div className="flex items-center justify-between font-mono text-[10.5px] uppercase tracking-[0.16em] text-[#71767b]">
-          <span>X · Post</span>
-          <span>{charCount} / 280</span>
+    <div className="w-[560px] max-w-full overflow-hidden rounded-xl border border-black/10 bg-black text-[#e7e9ea] shadow-[0_24px_60px_-44px_rgba(0,0,0,0.6)]">
+      <div className="flex items-center justify-between border-b border-white/[0.08] bg-black px-4 py-2.5">
+        <div className="flex items-center gap-2">
+          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 text-white" fill="currentColor" aria-hidden>
+            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+          </svg>
+          <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-[#71767b]">
+            X post preview
+          </span>
         </div>
+        <span
+          className={
+            "font-mono text-[10.5px] " +
+            (overLimit ? "text-red-400" : "text-[#71767b]")
+          }
+        >
+          {charCount} / 280
+        </span>
       </div>
-      <article className="px-4 py-3 sm:px-5 sm:py-4">
+
+      <article className="px-4 py-3">
         <header className="flex items-start gap-3">
           <div
             aria-hidden
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#1d9bf0] to-[#0a2540] font-serif text-base font-semibold text-white"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#1d9bf0] to-[#0a2540] text-[14px] font-semibold text-white"
           >
             {initials(authorName ?? "MM")}
           </div>
           <div className="flex min-w-0 flex-1 flex-col text-[15px] leading-snug">
             <div className="flex items-center gap-1">
               <span className="truncate font-bold text-[#e7e9ea]">{authorName ?? "Multimail"}</span>
-              <BadgeCheck className="h-4 w-4 shrink-0 text-[#1d9bf0]" fill="currentColor" aria-hidden />
+              <svg viewBox="0 0 22 22" className="h-4 w-4 shrink-0 text-[#1d9bf0]" fill="currentColor" aria-hidden>
+                <path d="M20.396 11c-.018-.646-.215-1.275-.57-1.816-.354-.54-.852-.972-1.438-1.246.223-.607.27-1.264.14-1.897-.131-.634-.437-1.218-.882-1.687-.47-.445-1.053-.75-1.687-.882-.633-.13-1.29-.083-1.897.14-.273-.587-.704-1.086-1.245-1.44S11.647 1.62 11 1.604c-.646.017-1.275.213-1.815.568s-.972.854-1.247 1.44c-.608-.223-1.267-.272-1.902-.14-.635.13-1.22.436-1.69.882-.445.47-.749 1.055-.878 1.688-.13.633-.08 1.29.144 1.896-.587.274-1.087.705-1.443 1.245-.356.54-.555 1.17-.574 1.817.02.647.218 1.276.574 1.817.356.54.856.972 1.443 1.245-.224.606-.274 1.263-.144 1.896.13.634.433 1.218.879 1.688.47.443 1.054.747 1.687.878.633.132 1.29.084 1.897-.136.274.586.705 1.084 1.246 1.439.54.354 1.17.551 1.816.569.647-.016 1.276-.213 1.817-.567s.972-.854 1.245-1.44c.604.239 1.266.296 1.903.164.636-.132 1.22-.447 1.68-.907.46-.46.776-1.044.908-1.68s.075-1.299-.165-1.903c.586-.274 1.084-.705 1.439-1.246.354-.54.551-1.17.569-1.816zM9.662 14.85l-3.429-3.428 1.428-1.427 2.001 2 4.588-4.587 1.427 1.428z" />
+              </svg>
               <span className="text-[#71767b]">@{authorHandle ?? "multimail"}</span>
             </div>
             <div className="-mt-0.5">
@@ -95,24 +111,35 @@ function Action({
   count?: string;
   active?: boolean;
 }) {
-  const icons = {
-    reply: MessageCircle,
-    repost: Repeat2,
-    like: Heart,
-    view: Eye,
-    share: Share,
-  } as const;
-  const Icon = icons[icon];
-  const color = active ? "text-[#f91880]" : icon === "repost" ? "text-[#00ba7c]" : "text-[#71767b]";
-  const filled = active && icon === "like";
+  const d: Record<typeof icon, string> = {
+    reply: "M3 8c2-3 6-3 8 0v4l3-3-3 3c-2 3-6 3-8 0z",
+    repost: "M4 8V5l-3 3 3 3v-3h7M12 11v3l3-3-3-3v3H5",
+    like: "M9 14s-5-2.5-5-6a3 3 0 0 1 5-2 3 3 0 0 1 5 2c0 3.5-5 6-5 6z",
+    view: "M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5zm7 1a2 2 0 1 0 0-4 2 2 0 0 0 0 4z",
+    share: "M2 8l12-6-4 14-3-6-5-2z",
+  };
+  const color = active
+    ? "text-[#f91880]"
+    : icon === "repost"
+      ? "text-[#00ba7c]"
+      : "text-[#71767b]";
   return (
-    <button type="button" className={`group flex items-center gap-1 rounded-full px-2 py-1 text-[12px] transition-colors hover:bg-white/5 ${color}`}>
-      <Icon
+    <button
+      type="button"
+      className={"group flex items-center gap-1 rounded-full px-2 py-1 text-[12px] transition-colors hover:bg-white/5 " + color}
+    >
+      <svg
+        viewBox="0 0 16 16"
         className="h-[18px] w-[18px]"
-        fill={filled ? "currentColor" : "none"}
-        strokeWidth={1.6}
+        fill={active && icon === "like" ? "currentColor" : "none"}
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
         aria-hidden
-      />
+      >
+        <path d={d[icon]} />
+      </svg>
       {count ? <span>{count}</span> : null}
     </button>
   );

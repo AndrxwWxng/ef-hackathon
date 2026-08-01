@@ -2,7 +2,21 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu } from "lucide-react";
+
+function Logo({ paperColor }: { paperColor: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden>
+      <rect x="0.5" y="0.5" width="23" height="23" rx="6.5" fill="currentColor" />
+      <path
+        d="M5 19V6l7 8 7-8v13"
+        stroke={paperColor}
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 export function SiteHeader() {
   const pathname = usePathname();
@@ -10,44 +24,39 @@ export function SiteHeader() {
 
   return (
     <header
-      className={`sticky top-0 z-50 w-full border-b backdrop-blur-md ${
-        isWorkspace
-          ? "border-[#d8dde6]/80 bg-[#eef0f4]/90 text-[#0f172a] dark:border-[#232834] dark:bg-[#0b0d12]/90 dark:text-[#eef0f4]"
-          : "border-[var(--border)]/60 bg-[var(--background)]/90 text-[var(--foreground)]"
-      }`}
+      className={
+        "sticky top-0 z-50 w-full border-b backdrop-blur-md " +
+        (isWorkspace
+          ? "border-[var(--app-line)] bg-[var(--app-bg)]/90 text-[var(--app-ink)]"
+          : "border-[var(--border)]/60 bg-[var(--background)]/90 text-[var(--foreground)]")
+      }
     >
       <nav
         aria-label="Primary navigation"
-        className="mx-auto flex h-14 w-full max-w-[1480px] items-center justify-between px-4 sm:px-6"
+        className="mx-auto flex h-11 w-full max-w-[1600px] items-center justify-between px-3 sm:px-5"
       >
         <Link
           href="/"
           aria-label="Multimail home"
           className="flex items-center gap-2 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-4"
         >
-          <Menu aria-hidden className="h-5 w-5" strokeWidth={1.8} />
-          <span className="font-serif text-lg font-medium tracking-[-0.025em]">
+          <Logo paperColor={isWorkspace ? "#fbfcfe" : "#fbf6ea"} />
+          <span className="font-serif text-[1rem] font-medium leading-none tracking-[-0.02em]">
             Multimail
           </span>
         </Link>
 
-        <div className="flex items-center gap-4 sm:gap-6">
-          {isWorkspace && (
-            <span className="hidden font-mono text-[10px] uppercase tracking-[0.16em] text-[#5b6478] sm:block dark:text-[#8a93a6]">
-              Workspace
-            </span>
-          )}
-          <Link
-            href={isWorkspace ? "/" : "/app"}
-            className={`rounded-sm text-sm font-medium outline-none transition-opacity hover:opacity-60 focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-4 ${
-              isWorkspace
-                ? "text-[#0f172a] dark:text-[#eef0f4]"
-                : "text-[var(--foreground)]"
-            }`}
-          >
-            {isWorkspace ? "Home" : "Open app"}
-          </Link>
-        </div>
+        <Link
+          href={isWorkspace ? "/" : "/app"}
+          className={
+            "rounded-full px-3 py-1 text-[12px] font-medium transition-opacity hover:opacity-80 " +
+            (isWorkspace
+              ? "text-[var(--app-ink)] hover:bg-[var(--app-soft)]"
+              : "bg-[var(--ink)] text-[var(--paper)]")
+          }
+        >
+          {isWorkspace ? "← Home" : "Open app"}
+        </Link>
       </nav>
     </header>
   );

@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, Check, ChevronDown, Copy, Plus, RefreshCw, X } from "lucide-react";
 
 import { NewsletterPreview } from "./_components/NewsletterPreview";
 import { LinkedInPreview } from "./_components/LinkedInPreview";
@@ -59,67 +58,6 @@ type GenerationState = {
   error?: string;
 };
 
-type StageStatus = "pending" | "running" | "done" | "error";
-type StageGroup = "pull" | "ingest" | "generate";
-type Stage = {
-  id: string;
-  group: StageGroup;
-  label: string;
-  status: StageStatus;
-  startedAt?: number;
-  ms?: number;
-  detail?: string;
-};
-
-const GROUP_ORDER: StageGroup[] = ["pull", "ingest", "generate"];
-const GROUP_LABEL: Record<StageGroup, string> = {
-  pull: "Pull from GitHub",
-  ingest: "Ingest analysis",
-  generate: "Generate drafts",
-};
-
-const STAGE_PRESETS: { id: string; group: StageGroup; label: string }[] = [
-  { id: "pull.init", group: "pull", label: "Initialize pull" },
-  { id: "pull.clone", group: "pull", label: "Clone repository" },
-  { id: "pull.branch", group: "pull", label: "Resolve branch" },
-  { id: "pull.window", group: "pull", label: "Compute time window" },
-  { id: "pull.shape", group: "pull", label: "Collect counts" },
-  { id: "pull.structure", group: "pull", label: "Read repo structure" },
-  { id: "pull.narrative", group: "pull", label: "Capture commits" },
-  { id: "pull.synthesize", group: "pull", label: "Synthesize analysis" },
-  { id: "ingest.normalize", group: "ingest", label: "Normalize analysis" },
-  { id: "ingest.extract", group: "ingest", label: "Extract themes" },
-  { id: "ingest.summarize", group: "ingest", label: "Summarize context" },
-  { id: "ingest.store", group: "ingest", label: "Store source" },
-  { id: "generate.newsletter", group: "generate", label: "Draft newsletter" },
-  { id: "generate.linkedin", group: "generate", label: "Draft LinkedIn post" },
-  { id: "generate.x", group: "generate", label: "Draft X post" },
-];
-
-function initialStages(): Stage[] {
-  return STAGE_PRESETS.map((p) => ({
-    id: p.id,
-    group: p.group,
-    label: p.label,
-    status: "pending",
-  }));
-}
-
-function progressPercent(stages: Stage[]): number {
-  if (!stages.length) return 0;
-  const weights: Record<StageGroup, number> = { pull: 1, ingest: 1, generate: 2 };
-  let total = 0;
-  let done = 0;
-  for (const s of stages) {
-    const w = weights[s.group];
-    total += w;
-    if (s.status === "done") done += w;
-    else if (s.status === "running") done += w * 0.5;
-    else if (s.status === "error") done += 0;
-  }
-  return Math.round((done / total) * 100);
-}
-
 type ContextSummary = {
   sourceCount: number;
   words: number;
@@ -131,46 +69,45 @@ type ContextSummary = {
   body: string;
 };
 
-const MODALITY_META: Record<Modality, { label: string; meta: string; placeholder: string; accept?: string; help: string }> = {
+const MODALITY_META: Record<Modality, { label: string; meta: string; placeholder: string; accept?: string; help: string; icon: string }> = {
   text: {
-    label: "Notes & docs",
+    label: "Note",
     meta: "text",
     placeholder: "Paste notes, a doc, a brief…",
-    help: "Drop text in. We will normalize, extract themes, and surface key phrases.",
+    help: "Drop text in. We normalize, extract themes, and surface key phrases.",
+    icon: "M4 4h12v12H4zM4 7h12M4 11h8",
   },
   audio: {
-    label: "Voice notes",
+    label: "Voice",
     meta: "audio",
     placeholder: "Drop an .mp3, .m4a, .wav…",
     accept: "audio/*",
-    help: "Whisper transcribes audio locally when OPENAI_API_KEY is set; otherwise a deterministic mock transcript is used.",
+    help: "Whisper transcribes audio when OPENAI_API_KEY is set; otherwise a deterministic mock is used.",
+    icon: "M5 9v6h2l3 3V6L7 9H5zM13 8a3 3 0 0 1 0 8M15 5a7 7 0 0 1 0 14",
   },
   video: {
     label: "Video",
     meta: "video",
     placeholder: "Drop an .mp4, .mov, .webm…",
     accept: "video/*",
-    help: "Frames are extracted and stitched into a transcript alongside any built-in audio track.",
+    help: "Frames are extracted and stitched into a transcript alongside any audio track.",
+    icon: "M3 5h10v10H3zM13 8l4-2v8l-4-2",
   },
   discord: {
-    label: "Discord channel",
+    label: "Discord",
     meta: "discord",
     placeholder: "Channel ID + bot token",
-    help: "Add a Discord bot token and channel id. The bot must be a member of the channel. We pull the latest 50 messages by default.",
+    help: "Add a bot token and channel id. The bot must be a member of the channel. We pull the latest 50 messages by default.",
+    icon: "M7 8a2 2 0 1 0 0 .01M13 8a2 2 0 1 0 0 .01M5 6l-1 9a8 8 0 0 0 4 1.5M19 6l1 9a8 8 0 0 1-4 1.5M5 6l1-2c1 .5 2 1 4 1s3-.5 4-1l1 2",
   },
   slack: {
-    label: "Slack channel",
+    label: "Slack",
     meta: "slack",
     placeholder: "Channel ID + bot token",
-    help: "Add a Slack bot token (xoxb-…) and channel id. The bot must be invited to the channel. We pull the latest 50 messages by default.",
+    help: "Add a bot token (xoxb-…) and channel id. The bot must be invited to the channel. We pull the latest 50 messages by default.",
+    icon: "M5 9h2v2H5zM9 5h2v6H9zM13 13h2v6h-2zM13 9h6v2h-6z",
   },
 };
-
-const runSizes = [
-  { id: "newsletter", label: "Newsletter", note: "350-550 words" },
-  { id: "linkedin", label: "LinkedIn", note: "~1,000 chars" },
-  { id: "x", label: "X post", note: "240-280 chars" },
-];
 
 type SourceConfig = {
   github: string;
@@ -180,13 +117,13 @@ type SourceConfig = {
 
 const MOOD_OPTIONS: { id: string; label: string; hint: string }[] = [
   { id: "default", label: "Default", hint: "Neutral, professional voice" },
-  { id: "Calm and measured", label: "Calm and measured", hint: "Short sentences, no hype" },
-  { id: "Warm and personal", label: "Warm and personal", hint: "First-person, direct to reader" },
-  { id: "Direct and punchy", label: "Direct and punchy", hint: "Leads with the news" },
-  { id: "Witty and a bit dry", label: "Witty and a bit dry", hint: "Light, subtle humor" },
-  { id: "Playful and energetic", label: "Playful and energetic", hint: "Enthusiastic, not breathless" },
-  { id: "Technical and matter-of-fact", label: "Technical and matter-of-fact", hint: "Engineer-coded, file-level" },
-  { id: "Visionary and forward-looking", label: "Visionary and forward-looking", hint: "Frames a longer arc" },
+  { id: "Calm and measured", label: "Calm", hint: "Short sentences, no hype" },
+  { id: "Warm and personal", label: "Warm", hint: "First-person, direct" },
+  { id: "Direct and punchy", label: "Direct", hint: "Leads with the news" },
+  { id: "Witty and a bit dry", label: "Witty", hint: "Light, subtle humor" },
+  { id: "Playful and energetic", label: "Playful", hint: "Enthusiastic, not breathless" },
+  { id: "Technical and matter-of-fact", label: "Technical", hint: "Engineer-coded, file-level" },
+  { id: "Visionary and forward-looking", label: "Visionary", hint: "Frames a longer arc" },
 ];
 
 const initialArtifacts: Artifact[] = [
@@ -194,8 +131,7 @@ const initialArtifacts: Artifact[] = [
     id: "newsletter",
     label: "Newsletter",
     handle: "For sponsors",
-    blurb:
-      "A short, sourced note your partners can read in 90 seconds: what shipped, what is next, and one ask.",
+    blurb: "A sourced note your partners can read in 90 seconds.",
     body:
       "This week we shipped a faster ingest path (4x), closed two long-standing integration gaps, and softened the digest tone. Next up: a calmer mobile view, a sponsor-only changelog, and a quiet month-end recap.",
     metric: "ready to generate",
@@ -205,10 +141,8 @@ const initialArtifacts: Artifact[] = [
     id: "linkedin",
     label: "LinkedIn",
     handle: "For partners in feed",
-    blurb:
-      "A single-paragraph post with the headline and the receipt. Reads as a status, not a broadcast.",
-    body:
-      "Click generate to draft this from the week's source data. Image is generated alongside the text.",
+    blurb: "A single-paragraph post with the headline and the receipt.",
+    body: "Click generate to draft this from the week's source data.",
     metric: "ready to generate",
     tone: "Direct, status-forward",
   },
@@ -216,10 +150,8 @@ const initialArtifacts: Artifact[] = [
     id: "x",
     label: "X post",
     handle: "For engineers in replies",
-    blurb:
-      "A short, slightly opinionated note. The kind that earns a bookmark and a quiet reply.",
-    body:
-      "Click generate to draft this from the week's source data. Image is generated alongside the text.",
+    blurb: "A short, slightly opinionated note worth a bookmark.",
+    body: "Click generate to draft this from the week's source data.",
     metric: "ready to generate",
     tone: "Terse, engineer-coded",
   },
@@ -232,13 +164,6 @@ function readFileAsDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error ?? new Error("FileReader failed"));
     reader.readAsDataURL(file);
   });
-}
-
-function formatBytes(bytes?: number): string {
-  if (!bytes) return "";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function formatDuration(durationMs?: number): string {
@@ -265,31 +190,24 @@ function formatTimestamp(value?: string): string {
 }
 
 function describeSource(source: Source): string {
-  const meta = MODALITY_META[source.modality];
-  if (source.status === "ingesting") return `${meta.label} · ingesting…`;
-  if (source.status === "error") return `${meta.label} · ${source.errorMessage ?? "failed"}`;
+  if (source.status === "ingesting") return `ingesting…`;
+  if (source.status === "error") return source.errorMessage ?? "failed";
   if (source.modality === "text") {
-    return `${meta.label} · ${source.transcriptPreview ? `${source.transcriptPreview.split(/\s+/).filter(Boolean).length} words` : "empty"}`;
+    return source.transcriptPreview ? `${source.transcriptPreview.split(/\s+/).filter(Boolean).length} words` : "empty";
   }
   if (source.modality === "discord" || source.modality === "slack") {
     const channel = source.connector?.channelName ? `#${source.connector.channelName}` : "channel";
     const msgs = source.connector?.lastMessageCount;
     const fetched = formatTimestamp(source.connector?.lastFetchedAt);
     const parts = [
-      meta.label,
-      source.connector?.workspace ? `${source.connector.workspace} · ${channel}` : channel,
+      channel,
+      source.connector?.workspace ?? "",
       msgs ? `${msgs} msgs` : null,
       fetched ? `synced ${fetched}` : null,
     ].filter(Boolean);
     return parts.join(" · ");
   }
-  if (source.modality === "audio") return `${meta.label} · ${formatDuration(source.durationMs) || "—"}`;
-  return `${meta.label} · ${formatDuration(source.durationMs) || "—"}`;
-}
-
-function summarizeKeyPhrases(source: Source): string {
-  if (!source.keyPhrases?.length) return "";
-  return source.keyPhrases.slice(0, 3).map((p) => p.phrase).join(" · ");
+  return formatDuration(source.durationMs) || "—";
 }
 
 const ENDPOINT_BY_KIND: Record<ArtifactKind, string> = {
@@ -324,8 +242,6 @@ export default function AppHome() {
     new Set<ArtifactKind>(["newsletter", "linkedin", "x"]),
   );
   const [running, setRunning] = useState(false);
-  const [stages, setStages] = useState<Stage[]>([]);
-  const [stageLogs, setStageLogs] = useState<string[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
   const [context, setContext] = useState<ContextSummary | null>(null);
   const [loadingSources, setLoadingSources] = useState(false);
@@ -337,7 +253,7 @@ export default function AppHome() {
   const [pendingFile, setPendingFile] = useState<{ modality: "audio" | "video"; file: File } | null>(null);
   const [artifacts, setArtifacts] = useState<Artifact[]>(initialArtifacts);
   const [state, setState] = useState<GenerationState>({ status: "idle" });
-  const [configOpen, setConfigOpen] = useState(true);
+  const [configOpen, setConfigOpen] = useState(false);
   const [sourceConfig, setSourceConfig] = useState<SourceConfig>({
     github: "https://github.com/AndrxwWxng/ef-hackathon",
     writingSamples: [
@@ -393,6 +309,10 @@ export default function AppHome() {
     ? sourceConfig.github.trim()
     : "owner/repo";
 
+  const sourceWordLabel = context ? `${context.words.toLocaleString()} words` : "—";
+  const sourceCountLabel = context ? `${context.sourceCount}` : "0";
+  const weekLabel = "Week 32 · Aug 4 – 10";
+
   async function generateOne(kind: ArtifactKind): Promise<void> {
     setState({ status: "loading" });
     try {
@@ -443,124 +363,27 @@ export default function AppHome() {
       setState({ status: "error", error: "Pick at least one artifact to generate." });
       return;
     }
-    const repo = sourceConfig.github.trim();
-    if (!repo) {
-      setState({ status: "error", error: "Add a GitHub repo (owner/repo or full URL) before running the week." });
-      return;
-    }
     setRunning(true);
     setState({ status: "loading" });
-    setStages(initialStages());
-    setStageLogs([]);
     setFeedback("");
 
-    const selectedTargets = (["newsletter", "linkedin", "x"] as ArtifactKind[]).filter((t) => targets.has(t));
-    const body = JSON.stringify({
-      repoUrl: repo,
-      targets: selectedTargets,
-      mood: sourceConfig.mood === "default" ? undefined : sourceConfig.mood,
-      writingSamples: writtenSamples,
+    const order: ArtifactKind[] = ["newsletter", "linkedin", "x"];
+    for (const target of order) {
+      if (!targets.has(target)) continue;
+      await generateOne(target);
+    }
+    setRunning(false);
+    setState({ status: "idle" });
+  }
+
+  function selectTab(kind: ArtifactKind) {
+    setActiveId(kind);
+    setTargets((prev) => {
+      if (prev.has(kind)) return prev;
+      const next = new Set(prev);
+      next.add(kind);
+      return next;
     });
-
-    let res: Response;
-    try {
-      res = await fetch("/app/api/run-week", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-      });
-    } catch (err) {
-      setRunning(false);
-      setState({ status: "error", error: err instanceof Error ? err.message : String(err) });
-      return;
-    }
-
-    if (!res.ok || !res.body) {
-      setRunning(false);
-      const text = await res.text().catch(() => "");
-      setState({ status: "error", error: text || `run failed (${res.status})` });
-      return;
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let sawError = false;
-
-    const handleEvent = (raw: string) => {
-      let evt: { type: string } & Record<string, unknown>;
-      try {
-        evt = JSON.parse(raw) as { type: string } & Record<string, unknown>;
-      } catch {
-        return;
-      }
-      if (evt.type === "stage") {
-        const stage = evt.stage as Stage;
-        setStages((prev) => {
-          const next = [...prev];
-          const i = next.findIndex((s) => s.id === stage.id);
-          if (i >= 0) next[i] = stage;
-          else next.push(stage);
-          return next;
-        });
-      } else if (evt.type === "log") {
-        const line = String(evt.line ?? "");
-        setStageLogs((prev) => [...prev.slice(-49), line]);
-      } else if (evt.type === "source") {
-        setStageLogs((prev) => [...prev.slice(-49), `stored source · ${String(evt.label ?? "")}`]);
-      } else if (evt.type === "draft") {
-        const kind = evt.kind as ArtifactKind;
-        const text = String(evt.text ?? "");
-        const metric = String(evt.metric ?? "");
-        const imageDataUrl = typeof evt.imageDataUrl === "string" ? evt.imageDataUrl : undefined;
-        setArtifacts((prev) =>
-          prev.map((a) =>
-            a.id === kind
-              ? { ...a, body: text, metric, imageDataUrl, generated: true }
-              : a,
-          ),
-        );
-      } else if (evt.type === "error") {
-        sawError = true;
-        setState({ status: "error", error: String(evt.message ?? "unknown error") });
-      } else if (evt.type === "complete") {
-        setState({ status: "idle" });
-      }
-    };
-
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let idx = buffer.indexOf("\n\n");
-        while (idx >= 0) {
-          const chunk = buffer.slice(0, idx);
-          buffer = buffer.slice(idx + 2);
-          const lines = chunk.split("\n");
-          for (const line of lines) {
-            if (!line.startsWith("data:")) continue;
-            handleEvent(line.slice(5).trim());
-          }
-          idx = buffer.indexOf("\n\n");
-        }
-      }
-    } catch (err) {
-      if (!sawError) {
-        setState({ status: "error", error: err instanceof Error ? err.message : String(err) });
-      }
-    } finally {
-      setRunning(false);
-      if (!sawError) {
-        void refresh();
-      }
-      setRunning(true);
-      const order: ArtifactKind[] = ["newsletter", "linkedin", "x"];
-      for (const target of order) {
-        if (!targets.has(target)) continue;
-        await generateOne(target);
-      }
-    }
   }
     function toggleTarget(kind: ArtifactKind) {
       setTargets((prev) => {
@@ -731,236 +554,149 @@ export default function AppHome() {
       fileInputRef.current?.click();
     };
 
-    const connectedCount = sources.filter((s) => s.status !== "error").length;
+  const connectedCount = sources.filter((s) => s.status !== "error").length;
+  const activeMood = MOOD_OPTIONS.find((m) => m.id === sourceConfig.mood);
 
-    return (
-      <main className="mx-auto flex min-h-[calc(100vh-72px)] w-full max-w-[1480px] flex-col justify-center gap-5 px-4 py-5 sm:px-5 lg:px-6">
-        <header className="flex flex-col gap-3 border-b border-[var(--app-line)] pb-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-              <span>Workspace</span>
-              <span className="text-[var(--app-line)]">·</span>
-              <span className="text-[var(--app-ink)]">Week 32</span>
-            </div>
-            <h1 className="font-serif text-[1.55rem] font-medium leading-[1.05] tracking-[-0.02em] sm:text-[1.7rem]">
-              Wrap the week into three drafts.
-            </h1>
-            <p className="max-w-xl text-[12px] leading-relaxed text-[var(--app-muted)]">
-              {context
-                ? `${context.sourceCount} source${context.sourceCount === 1 ? "" : "s"} · ${context.words} words · ${context.minutes.toFixed(1)} min ingested · drafts generated locally · nothing sent without a click.`
-                : "Aug 4 – Aug 10 · drafts generated locally · nothing sent without a click."}
-            </p>
+  return (
+    <div className="mx-auto flex h-[calc(100vh-45px)] w-full max-w-[1600px] flex-col gap-4 overflow-hidden px-3 py-4 sm:px-5 lg:px-6">
+      {/* Header */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex flex-col gap-0.5">
+          <div className="flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[0.12em] text-[var(--app-muted)]">
+            <span>Workspace</span>
+            <span className="text-[var(--app-line)]">·</span>
+            <span>{sourceCountLabel} source{context?.sourceCount === 1 ? "" : "s"}</span>
+            <span className="text-[var(--app-line)]">·</span>
+            <span>{sourceWordLabel}</span>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 rounded-full border border-[var(--app-line)] bg-[var(--app-panel)] px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
-              <span aria-hidden className="relative grid h-1.5 w-1.5 place-items-center">
-                <span className="absolute inset-0 animate-ping rounded-full bg-[var(--app-accent)] opacity-60" />
-                <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-accent)]" />
+          <h1 className="font-serif text-[1.4rem] font-medium leading-[1.05] tracking-[-0.02em] text-[var(--app-ink)] sm:text-[1.55rem]">
+            {weekLabel}
+          </h1>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px] text-[var(--app-muted)]">
+            <span
+              aria-hidden
+              className={
+                "h-1.5 w-1.5 rounded-full " +
+                (isGenerating
+                  ? "bg-amber-500 animate-pulse"
+                  : state.status === "error"
+                    ? "bg-red-500"
+                    : "bg-emerald-500")
+              }
+            />
+            {isGenerating ? "Generating" : state.status === "error" ? "Error" : "Ready"}
+          </div>
+          <button
+            type="button"
+            onClick={handleRun}
+            disabled={isGenerating || targets.size === 0}
+            className="group inline-flex h-9 items-center justify-center gap-2 rounded-full bg-[var(--app-ink)] px-4 text-[13px] font-medium text-[var(--app-paper)] transition-all hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <SparkIcon className="h-3.5 w-3.5" />
+            {isGenerating ? "Running…" : "Run the week"}
+          </button>
+        </div>
+      </div>
+
+      {state.status === "error" && (
+        <div
+          role="alert"
+          className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[12.5px] text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-400"
+        >
+          <span className="font-mono text-[10px] uppercase tracking-[0.12em]">Error</span>
+          <span className="ml-2">{state.error}</span>
+        </div>
+      )}
+
+      {/* Main grid */}
+      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[260px_1fr] xl:grid-cols-[280px_1fr]">
+        {/* Sidebar */}
+        <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-1">
+          {/* Sources */}
+          <section className="flex flex-col rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)]">
+            <div className="flex items-center justify-between border-b border-[var(--app-line)] px-4 py-3">
+              <h2 className="text-[12px] font-medium text-[var(--app-ink)]">Sources</h2>
+              <span className="font-mono text-[10.5px] text-[var(--app-muted)]">
+                {connectedCount}/{sources.length || 0}
               </span>
-              {isGenerating ? "Generating…" : state.status === "error" ? "Error" : "Ready to run"}
             </div>
+
+            <ul className="flex flex-col">
+              {sources.length === 0 && !loadingSources && (
+                <li className="px-4 py-4 text-[12px] leading-relaxed text-[var(--app-muted)]">
+                  No sources yet. Add a note, drop a voice memo, or connect a channel.
+                </li>
+              )}
+              {sources.map((source, i) => (
+                <SourceRow
+                  key={source.id}
+                  source={source}
+                  showBorder={i !== 0}
+                  refreshing={refreshingId === source.id}
+                  onRefresh={() => refreshSource(source.id)}
+                  onRemove={() => removeSource(source.id)}
+                />
+              ))}
+            </ul>
+
+            <div className="flex flex-wrap gap-1.5 border-t border-[var(--app-line)] px-4 py-3">
+              {(Object.keys(MODALITY_META) as Modality[]).map((modality) => (
+                <button
+                  key={modality}
+                  type="button"
+                  onClick={() => openComposer(modality)}
+                  className="inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[11.5px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)]"
+                >
+                  <PlusIcon className="h-3 w-3 text-[var(--app-muted)]" />
+                  {MODALITY_META[modality].label}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {/* Configuration */}
+          <section className="flex flex-col rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)]">
             <button
               type="button"
-              onClick={handleRun}
-              disabled={isGenerating || targets.size === 0}
-              className="group inline-flex h-9 items-center justify-center gap-2 rounded-full bg-[var(--app-ink)] px-4 text-[13px] font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => setConfigOpen((p) => !p)}
+              className="flex items-center justify-between border-b border-[var(--app-line)] px-4 py-3 text-left"
+              aria-expanded={configOpen}
             >
-              {isGenerating ? "Running…" : "Run the week"}
-              <ArrowRight
-                className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5"
-                aria-hidden
-              />
-            </button>
-          </div>
-        </header>
-
-        {state.status === "error" && (
-          <div
-            role="alert"
-            className="rounded-2xl border border-[var(--app-accent)]/40 bg-[var(--app-accent)]/5 px-4 py-3 text-[12px] text-[var(--app-ink)]"
-          >
-            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-accent)]">Generation error</span>
-            <p className="mt-1">{state.error}</p>
-          </div>
-        )}
-
-        <div className="grid gap-5 lg:grid-cols-[280px_1fr] xl:grid-cols-[300px_1fr]">
-          <aside className="sticky top-14 flex max-h-[calc(100vh-3.5rem)] flex-col gap-3 overflow-y-auto pr-1">
-            <section className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
-              <div className="flex items-center justify-between">
-                <h2 className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                  Sources
-                </h2>
+              <h2 className="text-[12px] font-medium text-[var(--app-ink)]">Configuration</h2>
+              <div className="flex items-center gap-2">
                 <span className="font-mono text-[10.5px] text-[var(--app-muted)]">
-                  {connectedCount} / {sources.length || 0}
+                  {activeMood?.label ?? "Default"}
                 </span>
+                <ChevronIcon className={"h-3 w-3 text-[var(--app-muted)] transition-transform " + (configOpen ? "rotate-180" : "")} />
               </div>
-              <ul className="flex flex-col">
-                {sources.length === 0 && !loadingSources && (
-                  <li className="py-3 text-[12px] text-[var(--app-muted)]">
-                    No sources yet — paste a note, drop a voice memo, add a video clip, or connect a Discord or Slack channel.
-                  </li>
-                )}
-                {sources.map((source, i) => (
-                  <li
-                    key={source.id}
-                    className={
-                      "flex items-start gap-3 py-2.5 " +
-                      (i !== 0 ? "border-t border-[var(--app-line)]" : "")
-                    }
-                  >
-                    <span
-                      aria-hidden
-                      className={
-                        "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full " +
-                        (source.status === "error"
-                          ? "bg-[#c23a2b]"
-                          : "bg-[var(--app-accent)]")
-                      }
-                    />
-                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span className="truncate text-[12.5px] font-medium text-[var(--app-ink)]">
-                          {source.label}
-                        </span>
-                        <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
-                          {MODALITY_META[source.modality].meta}
-                        </span>
-                      </div>
-                      <p className="truncate text-[11.5px] text-[var(--app-muted)]">
-                        {describeSource(source)}
-                      </p>
-                      {summarizeKeyPhrases(source) && (
-                        <p className="truncate text-[11px] italic text-[var(--app-muted)]">
-                          {summarizeKeyPhrases(source)}
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1">
-                      {source.connector && (
-                        <button
-                          type="button"
-                          onClick={() => refreshSource(source.id)}
-                          disabled={refreshingId === source.id}
-                          aria-label={`Refresh ${source.label}`}
-                          className="grid h-5 w-5 place-items-center rounded-full text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)] hover:text-[var(--app-ink)] disabled:opacity-50"
-                        >
-                          <RefreshCw
-                            className={
-                              "h-3 w-3 " + (refreshingId === source.id ? "animate-spin" : "")
-                            }
-                            aria-hidden
-                          />
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => removeSource(source.id)}
-                        className="grid h-5 w-5 place-items-center rounded-full text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)] hover:text-[var(--app-ink)]"
-                        aria-label={`Remove ${source.label}`}
-                      >
-                        <X className="h-2.5 w-2.5" strokeWidth={2.4} />
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-1 flex flex-wrap gap-1.5">
-                {(Object.keys(MODALITY_META) as Modality[]).map((modality) => (
-                  <button
-                    key={modality}
-                    type="button"
-                    onClick={() => openComposer(modality)}
-                    className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[var(--app-line)] px-3 text-[12px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)]"
-                  >
-                    <Plus className="h-3 w-3" aria-hidden />
-                    {MODALITY_META[modality].label}
-                  </button>
-                ))}
-              </div>
-            </section>
+            </button>
 
-            <details className="group rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4 [&[open]]:pb-3" open={configOpen} onToggle={(event) => setConfigOpen((event.target as HTMLDetailsElement).open)}>
-              <summary className="flex cursor-pointer list-none items-center justify-between outline-none">
-                <h2 className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                  Configuration
-                </h2>
-                <span className="flex items-center gap-2 font-mono text-[10.5px] text-[var(--app-muted)]">
-                  {(writtenSamples.length + (sourceConfig.github.trim() ? 1 : 0))} active
-                  <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" aria-hidden />
-                </span>
-              </summary>
-
-              <div className="mt-3 flex flex-col gap-3">
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center gap-2">
-                    <span aria-hidden className="grid h-5 w-5 place-items-center rounded-md bg-[#0f172a] text-white">
-                      <svg viewBox="0 0 16 16" className="h-3 w-3" fill="currentColor" aria-hidden>
-                        <path d="M8 .2a8 8 0 0 0-2.5 15.6c.4.1.5-.2.5-.4v-1.4c-2.2.5-2.7-1-2.7-1-.4-.9-.9-1.2-.9-1.2-.7-.5.1-.5.1-.5.8.1 1.2.8 1.2.8.7 1.2 1.9.9 2.4.7.1-.5.3-.9.5-1.1-1.8-.2-3.6-.9-3.6-3.9 0-.9.3-1.6.8-2.1-.1-.2-.4-1 .1-2.1 0 0 .7-.2 2.2.8a7.7 7.7 0 0 1 4 0c1.5-1 2.2-.8 2.2-.8.5 1.1.2 1.9.1 2.1.5.5.8 1.2.8 2.1 0 3-1.8 3.7-3.6 3.9.3.3.6.8.6 1.6v2.4c0 .2.1.5.5.4A8 8 0 0 0 8 .2z" />
-                      </svg>
-                    </span>
-                    <span className="text-[12.5px] font-medium">GitHub repo</span>
-                  </div>
-                  <label className="flex flex-col gap-1">
-                    <span className="sr-only">GitHub repository</span>
-                    <input
-                      type="text"
-                      value={sourceConfig.github}
-                      onChange={(event) =>
-                        setSourceConfig((prev) => ({ ...prev, github: event.target.value }))
-                      }
-                      placeholder="owner/repo"
-                      className="h-8 w-full rounded-md border border-[var(--app-line)] bg-[var(--app-paper)] px-3 font-mono text-[12px] outline-none transition-colors focus:border-[var(--app-ink)]"
-                    />
+            {configOpen && (
+              <div className="flex flex-col gap-4 px-4 py-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--app-muted)]">
+                    GitHub repo
                   </label>
+                  <input
+                    type="text"
+                    value={sourceConfig.github}
+                    onChange={(event) =>
+                      setSourceConfig((prev) => ({ ...prev, github: event.target.value }))
+                    }
+                    placeholder="owner/repo"
+                    className="h-8 w-full rounded-md border border-[var(--app-line)] bg-transparent px-2.5 font-mono text-[12px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-faint)] focus:border-[var(--app-ink)]"
+                  />
                 </div>
 
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-1.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-[12.5px] font-medium">Writing samples</span>
-                    <button
-                      type="button"
-                      onClick={addSample}
-                      className="rounded-full border border-[var(--app-line)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-ink)]"
-                    >
-                      + add
-                    </button>
+                    <label className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--app-muted)]">
+                      Mood
+                    </label>
                   </div>
-                  <div className="flex flex-col gap-2">
-                    {sourceConfig.writingSamples.map((sample, idx) => (
-                      <div key={`sample-${idx}`} className="flex flex-col gap-1">
-                        <label className="flex flex-col gap-1">
-                          <span className="sr-only">Writing sample {idx + 1}</span>
-                          <textarea
-                            rows={2}
-                            value={sample}
-                            onChange={(event) => updateSample(idx, event.target.value)}
-                            placeholder={`Paste an example ${idx === 0 ? "newsletter intro" : "post"}…`}
-                            className="w-full resize-none rounded-md border border-[var(--app-line)] bg-[var(--app-paper)] px-3 py-2 text-[12px] leading-snug outline-none transition-colors focus:border-[var(--app-ink)]"
-                          />
-                        </label>
-                        {sourceConfig.writingSamples.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => removeSample(idx)}
-                            className="self-end font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-accent)]"
-                          >
-                            remove
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[12.5px] font-medium">Mood</span>
-                    <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
-                      {sourceConfig.mood === "default" ? "default" : "applied"}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-1.5">
+                  <div className="grid grid-cols-4 gap-1">
                     {MOOD_OPTIONS.map((m) => {
                       const selected = sourceConfig.mood === m.id;
                       return (
@@ -971,745 +707,687 @@ export default function AppHome() {
                             setSourceConfig((prev) => ({ ...prev, mood: m.id }))
                           }
                           aria-pressed={selected}
+                          title={m.hint}
                           className={
-                            "flex flex-col items-start gap-0.5 rounded-md border px-2 py-1.5 text-left transition-all " +
+                            "rounded-md border px-2 py-1.5 text-[11px] font-medium transition-colors " +
                             (selected
-                              ? "border-[var(--app-ink)] bg-[var(--app-soft)]"
-                              : "border-[var(--app-line)] bg-[var(--app-paper)] hover:border-[var(--app-muted)]")
+                              ? "border-[var(--app-ink)] bg-[var(--app-ink)] text-[var(--app-paper)]"
+                              : "border-[var(--app-line)] bg-transparent text-[var(--app-ink)] hover:border-[var(--app-muted)]")
                           }
                         >
-                          <span className="text-[11.5px] font-medium text-[var(--app-ink)]">
-                            {m.label}
-                          </span>
-                          <span className="text-[10px] leading-snug text-[var(--app-muted)]">
-                            {m.hint}
-                          </span>
+                          {m.label}
                         </button>
                       );
                     })}
                   </div>
                 </div>
-              </div>
-            </details>
 
-            {context && context.sourceCount > 0 && (
-              <details className="group rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4 [&[open]]:pb-3" open>
-                <summary className="flex cursor-pointer list-none items-center justify-between outline-none">
-                  <h2 className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                    Ingested context
-                  </h2>
-                  <span className="flex items-center gap-2 font-mono text-[10.5px] text-[var(--app-muted)]">
-                    {context.sourceCount} source{context.sourceCount === 1 ? "" : "s"}
-                    <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" aria-hidden />
-                  </span>
-                </summary>
-                <div className="mt-3 flex flex-col gap-3">
-                  {context.themes.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {context.themes.map((theme) => (
-                        <span
-                          key={theme}
-                          className="rounded-full bg-[var(--app-soft)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--app-ink)]"
-                        >
-                          {theme}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  {context.bullets.length > 0 && (
-                    <ul className="flex flex-col gap-1 text-[11.5px] leading-snug text-[var(--app-ink)]">
-                      {context.bullets.slice(0, 4).map((bullet, i) => (
-                        <li key={i} className="flex gap-2">
-                          <span aria-hidden className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-[var(--app-accent)]" />
-                          <span>{bullet}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  <details className="text-[11px] text-[var(--app-muted)]">
-                    <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.16em]">
-                      Raw context for the agent
-                    </summary>
-                    <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--app-line)] bg-[var(--app-soft)] p-3 text-[11px] leading-relaxed text-[var(--app-ink)]">
-                      {context.body}
-                    </pre>
-                  </details>
-                </div>
-              </details>
-            )}
-
-            <section className="flex flex-col gap-2 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
-              <div className="flex items-center justify-between">
-                <h2 className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                  Run size
-                </h2>
-                <span className="font-mono text-[10.5px] text-[var(--app-muted)]">
-                  {targets.size}/3
-                </span>
-              </div>
-              <div className="flex flex-col">
-                {runSizes.map((option, i) => {
-                  const selected = targets.has(option.id as ArtifactKind);
-                  return (
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--app-muted)]">
+                      Writing samples
+                    </label>
                     <button
-                      key={option.id}
                       type="button"
-                      role="checkbox"
-                      aria-checked={selected}
-                      onClick={() => toggleTarget(option.id as ArtifactKind)}
-                      className={
-                        "group flex items-center justify-between gap-3 py-2 text-left transition-colors " +
-                        (i !== 0 ? "border-t border-[var(--app-line)]" : "")
-                      }
+                      onClick={addSample}
+                      className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-ink)]"
                     >
-                      <div className="flex items-center gap-2.5">
-                        <span
-                          aria-hidden
-                          className={
-                            "grid h-3.5 w-3.5 place-items-center rounded border transition-colors " +
-                            (selected
-                              ? "border-[var(--app-ink)] bg-[var(--app-ink)] text-[var(--app-paper)]"
-                              : "border-[var(--app-line)] group-hover:border-[var(--app-muted)]")
-                          }
-                        >
-                          {selected && (
-                            <Check className="h-2.5 w-2.5" strokeWidth={3} aria-hidden />
-                          )}
-                        </span>
-                        <span
-                          className={
-                            "text-[12.5px] " +
-                            (selected
-                              ? "font-medium text-[var(--app-ink)]"
-                              : "text-[var(--app-muted)]")
-                          }
-                        >
-                          {option.label}
-                        </span>
-                      </div>
-                      <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
-                        {option.note}
-                      </span>
+                      + add
                     </button>
-                  );
-                })}
-              </div>
-              <div className="flex items-center justify-between gap-2 border-t border-[var(--app-line)] pt-2">
-                <button
-                  type="button"
-                  onClick={() => setTargets(new Set(["newsletter", "linkedin", "x"]))}
-                  className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-ink)]"
-                >
-                  select all
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTargets(new Set())}
-                  className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-ink)]"
-                >
-                  clear
-                </button>
-              </div>
-            </section>
-          </aside>
-
-          <section className="flex flex-col gap-4">
-            {(stages.length > 0 || running) && (
-              <RunProgress
-                stages={stages}
-                running={running}
-                percent={progressPercent(stages)}
-                logs={stageLogs}
-                repo={sourceConfig.github}
-              />
-            )}
-
-            <div
-              role="tablist"
-              aria-label="Artifacts"
-              className="grid gap-2 sm:grid-cols-3"
-            >
-              {artifacts.map((artifact) => {
-                const selected = artifact.id === activeId;
-                return (
-                  <button
-                    key={artifact.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={selected}
-                    onClick={() => setActiveId(artifact.id)}
-                    className={
-                      "group relative flex flex-col items-start gap-1 overflow-hidden rounded-2xl border p-3.5 text-left transition-all " +
-                      (selected
-                        ? "border-[var(--app-ink)] bg-[var(--app-panel)] shadow-[0_18px_40px_-28px_rgba(15,23,42,0.45)]"
-                        : "border-[var(--app-line)] bg-[var(--app-panel)]/60 hover:border-[var(--app-muted)]")
-                    }
-                  >
-                    <div className="flex w-full items-center justify-between gap-2">
-                      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                        {artifact.handle}
-                      </span>
-                      <span
-                        className={
-                          "shrink-0 font-mono text-[10px] " +
-                          (selected ? "text-[var(--app-ink)]" : "text-[var(--app-muted)]")
-                        }
-                      >
-                        {artifact.metric}
-                      </span>
-                    </div>
-                    <div className="font-serif text-[1.25rem] font-medium leading-[1.05] tracking-[-0.01em] text-[var(--app-ink)]">
-                      {artifact.label}
-                    </div>
-                    <p className="line-clamp-2 text-[11.5px] leading-snug text-[var(--app-muted)]">
-                      {artifact.blurb}
-                    </p>
-                  </button>
-                );
-              })}
-            </div>
-
-            <article className="flex flex-col overflow-hidden rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)]">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--app-line)] px-4 py-2.5">
-                <div className="flex items-center gap-3">
-                  <div className="flex flex-col">
-                    <span className="text-[12.5px] font-medium text-[var(--app-ink)]">
-                      {active.label} draft
-                    </span>
-                    <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                      {active.tone} · {active.metric}
-                    </span>
                   </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleRegenerate}
-                    disabled={isGenerating || !targets.has(active.id)}
-                    className="inline-flex h-8 items-center justify-center rounded-full border border-[var(--app-line)] px-3 text-[12px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)] disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Regenerate
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (typeof navigator !== "undefined" && navigator.clipboard) {
-                        void navigator.clipboard.writeText(active.body);
-                      }
-                    }}
-                    className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full bg-[var(--app-ink)] px-3 text-[12px] font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px"
-                  >
-                    Copy markdown
-                    <Copy className="h-3 w-3" aria-hidden />
-                  </button>
-                </div>
-              </div>
-              <div className="bg-[var(--app-bg)] px-4 py-8 sm:px-8 sm:py-10">
-                <ChannelPreview
-                  artifact={active}
-                  githubDisplay={githubDisplay}
-                  authorName={authorForKind(active.id)}
-                  authorTitle={titleForKind(active.id)}
-                />
-              </div>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[var(--app-line)] px-4 py-2 font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
-                <span>{githubDisplay}</span>
-                <span className="text-[var(--app-line)]">·</span>
-                <span>{sourceConfig.mood === "default" ? "default tone" : sourceConfig.mood}</span>
-                <span className="text-[var(--app-line)]">·</span>
-                <span>{writtenSamples.length} sample{writtenSamples.length === 1 ? "" : "s"}</span>
-                <span className="text-[var(--app-line)]">·</span>
-                <span>{active.metric}</span>
-                {context && context.sourceCount > 0 && (
-                  <>
-                    <span className="text-[var(--app-line)]">·</span>
-                    <span>{context.sourceCount} source{context.sourceCount === 1 ? "" : "s"}</span>
-                  </>
-                )}
-                <p className="whitespace-pre-wrap font-serif text-[1.05rem] leading-[1.45] text-[var(--app-ink)] sm:text-[1.15rem]">
-                  {active.body}
-                </p>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-[var(--app-line)] pt-3 font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                  <span>Source · week 32</span>
-                  <span className="text-[var(--app-line)]">·</span>
-                  <span>Voice · {active.tone.toLowerCase()}</span>
-                  <span className="text-[var(--app-line)]">·</span>
-                  <span>Length · {active.metric}</span>
-                  {context && context.sourceCount > 0 && (
-                    <>
-                      <span className="text-[var(--app-line)]">·</span>
-                      <span>Context · {context.sourceCount} source{context.sourceCount === 1 ? "" : "s"}</span>
-                    </>
-                  )}
-                </div>
-              </div>
-            </article>
-          </section>
-        </div>
-
-        {composer && (
-          <div
-            className="fixed inset-0 z-30 grid place-items-center bg-black/30 p-4 backdrop-blur-sm"
-            role="dialog"
-            aria-modal="true"
-            aria-label={`Add ${composer.kind === "connector" ? MODALITY_META[composer.modality].label : MODALITY_META[composer.modality].label} source`}
-            onClick={(event) => {
-              if (event.target === event.currentTarget) closeComposer();
-            }}
-          >
-            <div className="flex w-full max-w-lg flex-col gap-4 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-5 shadow-[0_30px_80px_-30px_rgba(15,23,42,0.4)]">
-              <div className="flex items-center justify-between">
-                <h3 className="font-serif text-[1.15rem] font-medium tracking-[-0.01em] text-[var(--app-ink)]">
-                  Add {composer.kind === "connector" ? MODALITY_META[composer.modality].label : MODALITY_META[composer.modality].label}
-                </h3>
-                <button
-                  type="button"
-                  onClick={closeComposer}
-                  className="grid h-7 w-7 place-items-center rounded-full text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)] hover:text-[var(--app-ink)]"
-                  aria-label="Close"
-                >
-                  <X className="h-3 w-3" strokeWidth={2.4} />
-                </button>
-              </div>
-
-              {composer.kind === "connector" ? (
-                <>
-                  <p className="text-[11.5px] leading-snug text-[var(--app-muted)]">
-                    {MODALITY_META[composer.modality].help}
-                  </p>
-                  <label className="flex flex-col gap-1.5">
-                    <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                      Label
-                    </span>
-                    <input
-                      value={composer.draft.label}
-                      onChange={(event) =>
-                        setComposer((prev) =>
-                          prev && prev.kind === "connector"
-                            ? { ...prev, draft: { ...prev.draft, label: event.target.value } }
-                            : prev,
-                        )
-                      }
-                      placeholder={
-                        composer.draft.modality === "discord"
-                          ? "Discord · #shipping"
-                          : "Slack · #eng-weekly"
-                      }
-                      className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 text-[13px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1.5">
-                    <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                      {composer.draft.modality === "discord" ? "Bot token" : "Bot token (xoxb-…)"}
-                    </span>
-                    <input
-                      type="password"
-                      value={composer.draft.token}
-                      onChange={(event) =>
-                        setComposer((prev) =>
-                          prev && prev.kind === "connector"
-                            ? { ...prev, draft: { ...prev.draft, token: event.target.value } }
-                            : prev,
-                        )
-                      }
-                      placeholder={composer.draft.modality === "discord" ? "MTI0NTY3…" : "xoxb-…"}
-                      autoComplete="off"
-                      className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 font-mono text-[12.5px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1.5">
-                    <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                      Channel id
-                    </span>
-                    <input
-                      value={composer.draft.channelId}
-                      onChange={(event) =>
-                        setComposer((prev) =>
-                          prev && prev.kind === "connector"
-                            ? { ...prev, draft: { ...prev.draft, channelId: event.target.value } }
-                            : prev,
-                        )
-                      }
-                      placeholder={composer.draft.modality === "discord" ? "123456789012345678" : "C0123ABCD"}
-                      className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 font-mono text-[12.5px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
-                    />
-                  </label>
-                  {composer.draft.modality === "slack" && (
-                    <label className="flex flex-col gap-1.5">
-                      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                        Workspace <span className="text-[var(--app-muted)]/70 normal-case tracking-normal">(optional)</span>
-                      </span>
-                      <input
-                        value={composer.draft.workspace ?? ""}
-                        onChange={(event) =>
-                          setComposer((prev) =>
-                            prev && prev.kind === "connector"
-                              ? { ...prev, draft: { ...prev.draft, workspace: event.target.value } }
-                              : prev,
-                          )
-                        }
-                        placeholder="acme-co"
-                        className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 text-[13px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
-                      />
-                    </label>
-                  )}
-                  <label className="flex flex-col gap-1.5">
-                    <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                      Messages to pull
-                    </span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={200}
-                      value={composer.draft.limit}
-                      onChange={(event) =>
-                        setComposer((prev) =>
-                          prev && prev.kind === "connector"
-                            ? {
-                              ...prev,
-                              draft: {
-                                ...prev.draft,
-                                limit: Math.max(1, Math.min(200, Number(event.target.value) || 1)),
-                              },
-                            }
-                            : prev,
-                        )
-                      }
-                      className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 font-mono text-[12.5px] text-[var(--app-ink)] outline-none transition-colors focus:border-[var(--app-ink)]"
-                    />
-                  </label>
-                </>
-              ) : (
-                <>
-                  <label className="flex flex-col gap-1.5">
-                    <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                      Label
-                    </span>
-                    <input
-                      value={composer.label}
-                      onChange={(event) => setComposer({ ...composer, label: event.target.value })}
-                      placeholder={composer.modality === "text" ? "Brief, kickoff notes, sponsor email…" : "Voice memo, demo recording…"}
-                      className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 text-[13px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
-                    />
-                  </label>
-
-                  {composer.modality === "text" ? (
-                    <label className="flex flex-col gap-1.5">
-                      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                        Text
-                      </span>
-                      <textarea
-                        value={composer.text}
-                        onChange={(event) => setComposer({ ...composer, text: event.target.value })}
-                        placeholder={MODALITY_META.text.placeholder}
-                        rows={8}
-                        className="resize-y rounded-xl border border-[var(--app-line)] bg-transparent p-3 text-[13px] leading-relaxed text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
-                      />
-                    </label>
-                  ) : (
-                    <div className="flex flex-col gap-2">
-                      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                        File
-                      </span>
-                      <button
-                        type="button"
-                        onClick={triggerFilePicker}
-                        className="flex flex-col items-start gap-1 rounded-xl border border-dashed border-[var(--app-line)] bg-[var(--app-soft)]/60 px-4 py-5 text-left transition-colors hover:border-[var(--app-ink)]"
-                      >
-                        <span className="text-[13px] font-medium text-[var(--app-ink)]">
-                          {pendingFile ? pendingFile.file.name : MODALITY_META[composer.modality].placeholder}
-                        </span>
-                        <span className="text-[11px] text-[var(--app-muted)]">
-                          {pendingFile
-                            ? `${formatBytes(pendingFile.file.size)} · ${pendingFile.file.type || "unknown"}`
-                            : "Click to pick a file from your computer"}
-                        </span>
-                      </button>
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept={MODALITY_META[composer.modality].accept}
-                        className="hidden"
-                        onChange={(event) => handleFile(event.target.files?.[0] ?? null)}
-                      />
-                    </div>
-                  )}
-                </>
-              )}
-
-              {feedback && (
-                <p
-                  className={
-                    "text-[11.5px] " +
-                    (feedback === "added" ? "text-[var(--positive)]" : "text-[#c23a2b]")
-                  }
-                >
-                  {feedback === "added" ? "Added to your sources." : feedback}
-                </p>
-              )}
-
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={closeComposer}
-                  className="inline-flex h-9 items-center justify-center rounded-full border border-[var(--app-line)] px-4 text-[12px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)]"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={submitComposer}
-                  disabled={adding}
-                  className="inline-flex h-9 items-center justify-center gap-2 rounded-full bg-[var(--app-ink)] px-4 text-[12px] font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px disabled:opacity-50"
-                >
-                  {adding ? "Connecting…" : composer.kind === "connector" ? "Connect" : "Ingest"}
-                  <ArrowRight className="h-3 w-3" aria-hidden />
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </main>
-    );
-  }
-
-  function authorForKind(kind: ArtifactKind): string {
-    if (kind === "newsletter") return "Multimail Team";
-    if (kind === "linkedin") return "M. Kapoor";
-    return "polar-relay";
-  }
-
-  function titleForKind(kind: ArtifactKind): string {
-    if (kind === "newsletter") return "Polar Relay · weekly";
-    if (kind === "linkedin") return "Founder · Polar Relay · weekly build notes";
-    return "· engineering at Polar Relay";
-  }
-
-  function ChannelPreview({
-    artifact,
-    authorName,
-    authorTitle,
-    githubDisplay,
-  }: {
-    artifact: Artifact;
-    authorName?: string;
-    authorTitle?: string;
-    githubDisplay?: string;
-  }) {
-    if (artifact.id === "newsletter") {
-      return (
-        <div className="mx-auto max-w-2xl">
-          <NewsletterPreview body={artifact.body} author={authorName} week={githubDisplay} />
-          {!artifact.generated && (
-            <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-              Run the week to generate a draft.
-            </p>
-          )}
-          {artifact.imageDataUrl && (
-            <div className="mx-auto mt-4 max-w-2xl overflow-hidden rounded-xl border border-[var(--app-line)]">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={artifact.imageDataUrl}
-                alt={`${artifact.label} generated image`}
-                className="block w-full"
-              />
-            </div>
-          )}
-        </div>
-      );
-    }
-    if (artifact.id === "linkedin") {
-      return (
-        <div className="mx-auto max-w-xl">
-          <LinkedInPreview body={artifact.body} authorName={authorName} authorTitle={authorTitle} />
-          {!artifact.generated && (
-            <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-              Run the week to generate a draft.
-            </p>
-          )}
-          {artifact.imageDataUrl && (
-            <div className="mx-auto mt-4 max-w-xl overflow-hidden rounded-xl border border-[var(--app-line)]">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={artifact.imageDataUrl}
-                alt={`${artifact.label} generated image`}
-                className="block w-full"
-              />
-            </div>
-          )}
-        </div>
-      );
-    }
-    return (
-      <div className="mx-auto max-w-lg">
-        <XPreview body={artifact.body} authorName={authorName} authorHandle="polar_relay" />
-        {!artifact.generated && (
-          <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-            Run the week to generate a draft.
-          </p>
-        )}
-        {artifact.imageDataUrl && (
-          <div className="mx-auto mt-4 max-w-lg overflow-hidden rounded-xl border border-[var(--app-line)]">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={artifact.imageDataUrl}
-              alt={`${artifact.label} generated image`}
-              className="block w-full"
-            />
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  function RunProgress({
-    stages,
-    running,
-    percent,
-    logs,
-    repo,
-  }: {
-    stages: Stage[];
-    running: boolean;
-    percent: number;
-    logs: string[];
-    repo: string;
-  }) {
-    const grouped = GROUP_ORDER.map((group) => ({
-      group,
-      items: stages.filter((s) => s.group === group),
-    }));
-    const overallLabel = running
-      ? "Running the week"
-      : percent >= 100
-        ? "Week complete"
-        : "Paused";
-    const currentGroup = GROUP_ORDER.find((g) =>
-      stages.some((s) => s.group === g && s.status === "running"),
-    );
-
-    return (
-      <section
-        aria-label="Run progress"
-        className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4"
-      >
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex flex-col gap-0.5">
-            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-              {repo || "GitHub"} · {overallLabel}
-            </span>
-            <span className="font-serif text-[1.1rem] font-medium tracking-[-0.01em] text-[var(--app-ink)]">
-              {currentGroup ? `${GROUP_LABEL[currentGroup]}…` : overallLabel}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-[11px] tabular-nums text-[var(--app-muted)]">
-              {percent}%
-            </span>
-            <span
-              aria-hidden
-              className={
-                "h-1.5 w-1.5 rounded-full " +
-                (running
-                  ? "bg-[var(--app-accent)] animate-pulse"
-                  : percent >= 100
-                    ? "bg-[var(--positive)]"
-                    : "bg-[var(--app-muted)]")
-              }
-            />
-          </div>
-        </div>
-
-        <div
-          role="progressbar"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={percent}
-          className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--app-soft)]"
-        >
-          <div
-            className="h-full rounded-full bg-[var(--app-ink)] transition-[width] duration-300"
-            style={{ width: `${percent}%` }}
-          />
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-3">
-          {grouped.map(({ group, items }) => (
-            <div
-              key={group}
-              className="flex flex-col gap-1.5 rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)]/40 p-3"
-            >
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                  {GROUP_LABEL[group]}
-                </span>
-                <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
-                  {items.filter((s) => s.status === "done").length}/{items.length}
-                </span>
-              </div>
-              <ul className="flex flex-col gap-1">
-                {items.map((stage) => (
-                  <li key={stage.id} className="flex items-start gap-2 text-[11.5px]">
-                    <StageDot status={stage.status} />
-                    <div className="flex min-w-0 flex-1 flex-col">
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span
-                          className={
-                            "truncate " +
-                            (stage.status === "done"
-                              ? "text-[var(--app-ink)]"
-                              : stage.status === "error"
-                                ? "text-[#c23a2b]"
-                                : stage.status === "running"
-                                  ? "text-[var(--app-ink)]"
-                                  : "text-[var(--app-muted)]")
-                          }
-                        >
-                          {stage.label}
-                        </span>
-                        {typeof stage.ms === "number" && stage.ms > 0 && (
-                          <span className="shrink-0 font-mono text-[10px] tabular-nums text-[var(--app-muted)]">
-                            {(stage.ms / 1000).toFixed(1)}s
-                          </span>
+                  <div className="flex flex-col gap-2">
+                    {sourceConfig.writingSamples.map((sample, idx) => (
+                      <div key={`sample-${idx}`} className="flex flex-col gap-1">
+                        <textarea
+                          rows={5}
+                          value={sample}
+                          onChange={(event) => updateSample(idx, event.target.value)}
+                          placeholder="Paste an example post…the model reads samples to calibrate voice."
+                          className="w-full resize-none rounded-lg border border-[var(--app-line)] bg-transparent px-3 py-2.5 text-[13px] leading-relaxed text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-faint)] focus:border-[var(--app-ink)]"
+                        />
+                        {sourceConfig.writingSamples.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeSample(idx)}
+                            className="self-end font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-ink)]"
+                          >
+                            remove
+                          </button>
                         )}
                       </div>
-                      {stage.detail && (
-                        <span className="truncate font-mono text-[10px] text-[var(--app-muted)]">
-                          {stage.detail}
-                        </span>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* Context summary (when sources exist) */}
+          {context && context.sourceCount > 0 && (
+            <section className="flex flex-col rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
+              <h2 className="text-[12px] font-medium text-[var(--app-ink)]">This week</h2>
+              <div className="mt-3 flex flex-col gap-3">
+                <div className="grid grid-cols-3 gap-2">
+                  <Stat label="Sources" value={context.sourceCount.toString()} />
+                  <Stat label="Words" value={context.words.toLocaleString()} />
+                  <Stat label="Minutes" value={context.minutes.toFixed(1)} />
+                </div>
+                {context.themes.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {context.themes.slice(0, 6).map((theme) => (
+                      <span
+                        key={theme}
+                        className="rounded-full bg-[var(--app-soft)] px-2 py-0.5 text-[10.5px] text-[var(--app-ink)]"
+                      >
+                        {theme}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {context.bullets.length > 0 && (
+                  <ul className="flex flex-col gap-1.5 text-[11.5px] leading-relaxed text-[var(--app-ink)]">
+                    {context.bullets.slice(0, 3).map((bullet, i) => (
+                      <li key={i} className="flex gap-2">
+                        <span aria-hidden className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-[var(--app-ink)]" />
+                        <span>{bullet}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </section>
+          )}
+        </aside>
+
+        {/* Main content */}
+        <section className="flex min-h-0 min-w-0 flex-col gap-3">
+          {/* Artifact tabs */}
+          <div role="tablist" aria-label="Artifacts" className="flex items-center gap-1 rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)] p-1">
+            {artifacts.map((artifact) => {
+              const selected = artifact.id === activeId;
+              const enabled = targets.has(artifact.id);
+              return (
+                <div
+                  key={artifact.id}
+                  role="tab"
+                  aria-selected={selected}
+                  className={
+                    "group relative flex flex-1 cursor-pointer items-center justify-between gap-2 rounded-lg px-3 py-2 text-left transition-colors " +
+                    (selected
+                      ? "bg-[var(--app-ink)] text-[var(--app-paper)]"
+                      : "text-[var(--app-ink)] hover:bg-[var(--app-soft)]")
+                  }
+                  onClick={() => selectTab(artifact.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      selectTab(artifact.id);
+                    }
+                  }}
+                  tabIndex={0}
+                >
+                  <div className="flex flex-col">
+                    <span className="text-[13px] font-medium">{artifact.label}</span>
+                    <span
+                      className={
+                        "font-mono text-[10px] uppercase tracking-[0.12em] " +
+                        (selected ? "text-[var(--app-paper)]/60" : "text-[var(--app-muted)]")
+                      }
+                    >
+                      {artifact.handle}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={
+                        "font-mono text-[10.5px] " +
+                        (selected ? "text-[var(--app-paper)]/70" : "text-[var(--app-muted)]")
+                      }
+                    >
+                      {artifact.metric}
+                    </span>
+                    <button
+                      type="button"
+                      role="checkbox"
+                      aria-checked={enabled}
+                      aria-label={`${enabled ? "Exclude" : "Include"} ${artifact.label} from the run`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleTarget(artifact.id);
+                      }}
+                      className={
+                        "grid h-4 w-4 place-items-center rounded-full border transition-colors " +
+                        (enabled
+                          ? selected
+                            ? "border-[var(--app-paper)] bg-[var(--app-paper)] text-[var(--app-ink)]"
+                            : "border-[var(--app-ink)] bg-[var(--app-ink)] text-[var(--app-paper)]"
+                          : selected
+                            ? "border-[var(--app-paper)]/40"
+                            : "border-[var(--app-line)]")
+                      }
+                    >
+                      {enabled && <TickIcon className="h-2.5 w-2.5" />}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Preview card */}
+          <article className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)]">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--app-line)] px-4 py-2.5">
+              <div className="flex items-center gap-3">
+                <ChannelBadge kind={active.id} />
+                <div className="flex flex-col">
+                  <span className="text-[13px] font-medium text-[var(--app-ink)]">
+                    {active.label} draft
+                  </span>
+                  <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-[var(--app-muted)]">
+                    {active.tone} · {active.metric}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleRegenerate}
+                  disabled={isGenerating || !targets.has(active.id)}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-[var(--app-line)] px-3 text-[12px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <RefreshIcon className="h-3 w-3" />
+                  Regenerate
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof navigator !== "undefined" && navigator.clipboard) {
+                      void navigator.clipboard.writeText(active.body);
+                    }
+                  }}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-full bg-[var(--app-ink)] px-3 text-[12px] font-medium text-[var(--app-paper)] transition-opacity hover:opacity-90"
+                >
+                  <CopyIcon className="h-3 w-3" />
+                  Copy
+                </button>
+              </div>
             </div>
-          ))}
+
+            <div className="flex-1 overflow-y-auto bg-[var(--app-soft)] px-4 py-6 sm:px-8 sm:py-8">
+              <ChannelPreview
+                artifact={active}
+                githubDisplay={githubDisplay}
+                authorName={authorForKind(active.id)}
+                authorTitle={titleForKind(active.id)}
+              />
+              {!active.generated && (
+                <p className="mt-4 text-center font-mono text-[10.5px] uppercase tracking-[0.12em] text-[var(--app-muted)]">
+                  Click Run the week to generate a draft.
+                </p>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[var(--app-line)] px-4 py-2 text-[11px] text-[var(--app-muted)]">
+              <span className="font-mono uppercase tracking-[0.12em] text-[10.5px]">Source</span>
+              <span>{githubDisplay}</span>
+              <span className="text-[var(--app-line)]">·</span>
+              <span>{sourceConfig.mood === "default" ? "Default tone" : sourceConfig.mood}</span>
+              <span className="text-[var(--app-line)]">·</span>
+              <span>{writtenSamples.length} sample{writtenSamples.length === 1 ? "" : "s"}</span>
+              {context && context.sourceCount > 0 && (
+                <>
+                  <span className="text-[var(--app-line)]">·</span>
+                  <span>{context.sourceCount} ingested</span>
+                </>
+              )}
+              <span className="ml-auto font-mono uppercase tracking-[0.12em] text-[10.5px]">
+                {active.metric}
+              </span>
+            </div>
+          </article>
+        </section>
+      </div>
+
+      {composer && (
+        <Composer
+          composer={composer}
+          adding={adding}
+          feedback={feedback}
+          fileInputRef={fileInputRef}
+          onClose={closeComposer}
+          onChange={setComposer}
+          onFile={handleFile}
+          onPickFile={triggerFilePicker}
+          onSubmit={submitComposer}
+        />
+      )}
+    </div>
+  );
+}
+
+function authorForKind(kind: ArtifactKind): string {
+  if (kind === "newsletter") return "Multimail Team";
+  if (kind === "linkedin") return "M. Kapoor";
+  return "polar-relay";
+}
+
+function titleForKind(kind: ArtifactKind): string {
+  if (kind === "newsletter") return "Polar Relay · weekly";
+  if (kind === "linkedin") return "Founder · Polar Relay · weekly build notes";
+  return "· engineering at Polar Relay";
+}
+
+function SourceRow({
+  source,
+  showBorder,
+  refreshing,
+  onRefresh,
+  onRemove,
+}: {
+  source: Source;
+  showBorder: boolean;
+  refreshing: boolean;
+  onRefresh: () => void;
+  onRemove: () => void;
+}) {
+  const meta = MODALITY_META[source.modality];
+  return (
+    <li
+      className={
+        "group flex items-start gap-2.5 px-4 py-2.5 " +
+        (showBorder ? "border-t border-[var(--app-line)]" : "")
+      }
+    >
+      <span
+        aria-hidden
+        className={
+          "mt-1 h-1.5 w-1.5 shrink-0 rounded-full " +
+          (source.status === "error" ? "bg-red-500" : "bg-emerald-500")
+        }
+      />
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="truncate text-[12.5px] font-medium text-[var(--app-ink)]">
+          {source.label}
+        </span>
+        <span className="truncate text-[11px] text-[var(--app-muted)]">
+          {meta.label} · {describeSource(source)}
+        </span>
+      </div>
+      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+        {source.connector && (
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={refreshing}
+            aria-label={`Refresh ${source.label}`}
+            className="grid h-6 w-6 place-items-center rounded text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)] hover:text-[var(--app-ink)] disabled:opacity-50"
+          >
+            <RefreshIcon className={"h-3 w-3 " + (refreshing ? "animate-spin" : "")} />
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={`Remove ${source.label}`}
+          className="grid h-6 w-6 place-items-center rounded text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)] hover:text-[var(--app-ink)]"
+        >
+          <XIcon className="h-3 w-3" />
+        </button>
+      </div>
+    </li>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col gap-0.5 rounded-lg bg-[var(--app-soft)] px-2.5 py-2">
+      <span className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-[var(--app-muted)]">
+        {label}
+      </span>
+      <span className="text-[14px] font-medium tabular-nums text-[var(--app-ink)]">{value}</span>
+    </div>
+  );
+}
+
+function ChannelBadge({ kind }: { kind: ArtifactKind }) {
+  const config: Record<ArtifactKind, { label: string; className: string }> = {
+    newsletter: {
+      label: "Email",
+      className: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+    },
+    linkedin: {
+      label: "LinkedIn",
+      className: "bg-blue-500/10 text-blue-700 dark:text-blue-400",
+    },
+    x: {
+      label: "X",
+      className: "bg-zinc-500/10 text-zinc-700 dark:text-zinc-300",
+    },
+  };
+  const c = config[kind];
+  return (
+    <span className={"rounded-full px-2 py-0.5 text-[10.5px] font-medium " + c.className}>
+      {c.label}
+    </span>
+  );
+}
+
+function ChannelPreview({
+  artifact,
+  githubDisplay,
+  authorName,
+  authorTitle,
+}: {
+  artifact: Artifact;
+  authorName?: string;
+  authorTitle?: string;
+  githubDisplay?: string;
+}) {
+  const body =
+    artifact.id === "newsletter" ? (
+      <NewsletterPreview body={artifact.body} author={authorName} week={githubDisplay} />
+    ) : artifact.id === "linkedin" ? (
+      <LinkedInPreview body={artifact.body} authorName={authorName} authorTitle={authorTitle} />
+    ) : (
+      <XPreview body={artifact.body} authorName={authorName} authorHandle="polar_relay" />
+    );
+
+  return (
+    <div className="mx-auto w-full max-w-fit">
+      <div className="mx-auto">{body}</div>
+      {artifact.imageDataUrl && (
+        <div className="mx-auto mt-3 max-w-2xl overflow-hidden rounded-xl border border-[var(--app-line)]">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={artifact.imageDataUrl}
+            alt={`${artifact.label} generated image`}
+            className="block w-full"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Composer({
+  composer,
+  adding,
+  feedback,
+  fileInputRef,
+  onClose,
+  onChange,
+  onFile,
+  onPickFile,
+  onSubmit,
+}: {
+  composer: ComposerState;
+  adding: boolean;
+  feedback: string;
+  fileInputRef: React.MutableRefObject<HTMLInputElement | null>;
+  onClose: () => void;
+  onChange: (state: ComposerState) => void;
+  onFile: (file: File | null) => void;
+  onPickFile: () => void;
+  onSubmit: () => void;
+}) {
+  const meta = MODALITY_META[composer.modality];
+
+  return (
+    <div
+      className="fixed inset-0 z-30 grid place-items-center bg-black/40 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Add ${meta.label} source`}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="flex w-full max-w-md flex-col gap-4 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-5 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-1">
+            <h3 className="text-[15px] font-medium text-[var(--app-ink)]">
+              Add {meta.label.toLowerCase()} source
+            </h3>
+            <p className="text-[12px] leading-relaxed text-[var(--app-muted)]">{meta.help}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)] hover:text-[var(--app-ink)]"
+            aria-label="Close"
+          >
+            <XIcon className="h-3.5 w-3.5" />
+          </button>
         </div>
 
-        {logs.length > 0 && (
-          <details className="text-[11px] text-[var(--app-muted)]">
-            <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.16em]">
-              Live log ({logs.length})
-            </summary>
-            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--app-line)] bg-[var(--app-soft)] p-3 text-[11px] leading-relaxed text-[var(--app-ink)]">
-              {logs.slice(-30).join("\n")}
-            </pre>
-          </details>
-        )}
-      </section>
-    );
-  }
+        <div className="flex flex-col gap-3">
+          <Field label="Label">
+            <input
+              value={composer.kind === "connector" ? composer.draft.label : composer.label}
+              onChange={(event) => {
+                if (composer.kind === "connector") {
+                  onChange({
+                    ...composer,
+                    draft: { ...composer.draft, label: event.target.value },
+                  });
+                } else {
+                  onChange({ ...composer, label: event.target.value });
+                }
+              }}
+              placeholder={
+                composer.kind === "connector"
+                  ? composer.draft.modality === "discord"
+                    ? "Discord · #shipping"
+                    : "Slack · #eng-weekly"
+                  : composer.modality === "text"
+                    ? "Brief, kickoff notes, sponsor email…"
+                    : "Voice memo, demo recording…"
+              }
+              className="h-9 w-full rounded-lg border border-[var(--app-line)] bg-transparent px-3 text-[13px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-faint)] focus:border-[var(--app-ink)]"
+            />
+          </Field>
 
-function StageDot({ status }: { status: StageStatus }) {
-  const base = "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full";
-  if (status === "done") return <span aria-hidden className={`${base} bg-[var(--positive)]`} />;
-  if (status === "error") return <span aria-hidden className={`${base} bg-[#c23a2b]`} />;
-  if (status === "running")
-    return (
-      <span aria-hidden className="relative mt-1.5 grid h-2 w-2 shrink-0 place-items-center">
-        <span className="absolute inset-0 animate-ping rounded-full bg-[var(--app-accent)] opacity-60" />
-        <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-accent)]" />
-      </span>
-    );
-  return <span aria-hidden className={`${base} bg-[var(--app-line)]`} />;
+          {composer.kind === "connector" ? (
+            <>
+              <Field label={composer.draft.modality === "discord" ? "Bot token" : "Bot token (xoxb-…)"}>
+                <input
+                  type="password"
+                  value={composer.draft.token}
+                  onChange={(event) =>
+                    onChange({
+                      ...composer,
+                      draft: { ...composer.draft, token: event.target.value },
+                    })
+                  }
+                  placeholder={composer.draft.modality === "discord" ? "MTI0NTY3…" : "xoxb-…"}
+                  autoComplete="off"
+                  className="h-9 w-full rounded-lg border border-[var(--app-line)] bg-transparent px-3 font-mono text-[12.5px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-faint)] focus:border-[var(--app-ink)]"
+                />
+              </Field>
+
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Channel id">
+                  <input
+                    value={composer.draft.channelId}
+                    onChange={(event) =>
+                      onChange({
+                        ...composer,
+                        draft: { ...composer.draft, channelId: event.target.value },
+                      })
+                    }
+                    placeholder={composer.draft.modality === "discord" ? "123456789012345678" : "C0123ABCD"}
+                    className="h-9 w-full rounded-lg border border-[var(--app-line)] bg-transparent px-3 font-mono text-[12px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-faint)] focus:border-[var(--app-ink)]"
+                  />
+                </Field>
+                <Field label="Messages">
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    value={composer.draft.limit}
+                    onChange={(event) =>
+                      onChange({
+                        ...composer,
+                        draft: {
+                          ...composer.draft,
+                          limit: Math.max(1, Math.min(200, Number(event.target.value) || 1)),
+                        },
+                      })
+                    }
+                    className="h-9 w-full rounded-lg border border-[var(--app-line)] bg-transparent px-3 font-mono text-[12px] text-[var(--app-ink)] outline-none transition-colors focus:border-[var(--app-ink)]"
+                  />
+                </Field>
+              </div>
+
+              {composer.draft.modality === "slack" && (
+                <Field label="Workspace (optional)">
+                  <input
+                    value={composer.draft.workspace ?? ""}
+                    onChange={(event) =>
+                      onChange({
+                        ...composer,
+                        draft: { ...composer.draft, workspace: event.target.value },
+                      })
+                    }
+                    placeholder="acme-co"
+                    className="h-9 w-full rounded-lg border border-[var(--app-line)] bg-transparent px-3 text-[13px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-faint)] focus:border-[var(--app-ink)]"
+                  />
+                </Field>
+              )}
+            </>
+          ) : composer.modality === "text" ? (
+            <Field label="Text">
+              <textarea
+                value={composer.text}
+                onChange={(event) => onChange({ ...composer, text: event.target.value })}
+                placeholder={meta.placeholder}
+                rows={8}
+                className="w-full resize-y rounded-lg border border-[var(--app-line)] bg-transparent p-3 text-[13px] leading-relaxed text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-faint)] focus:border-[var(--app-ink)]"
+              />
+            </Field>
+          ) : (
+            <Field label="File">
+              <button
+                type="button"
+                onClick={onPickFile}
+                className="flex flex-col items-start gap-1 rounded-lg border border-dashed border-[var(--app-line)] bg-[var(--app-soft)]/40 px-4 py-4 text-left transition-colors hover:border-[var(--app-ink)]"
+              >
+                <span className="text-[13px] font-medium text-[var(--app-ink)]">
+                  {composer.label || meta.placeholder}
+                </span>
+                <span className="text-[11.5px] text-[var(--app-muted)]">
+                  Click to pick a file from your computer
+                </span>
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={meta.accept}
+                className="hidden"
+                onChange={(event) => onFile(event.target.files?.[0] ?? null)}
+              />
+            </Field>
+          )}
+        </div>
+
+        {feedback && (
+          <p
+            className={
+              "text-[12px] " +
+              (feedback === "added" ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")
+            }
+          >
+            {feedback === "added" ? "Added to your sources." : feedback}
+          </p>
+        )}
+
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-9 items-center justify-center rounded-full px-4 text-[12.5px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)]"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onSubmit}
+            disabled={adding}
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-full bg-[var(--app-ink)] px-4 text-[12.5px] font-medium text-[var(--app-paper)] transition-opacity hover:opacity-90 disabled:opacity-40"
+          >
+            {adding ? "Connecting…" : composer.kind === "connector" ? "Connect" : "Add"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--app-muted)]">
+        {label}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+function SparkIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="currentColor" aria-hidden>
+      <path d="M8 0l1.8 4.5L14 6l-3.5 2.5L12 13l-4-2.5L4 13l1.5-4.5L2 6l4.2-1.5z" />
+    </svg>
+  );
+}
+
+function RefreshIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M2 8a6 6 0 0 1 10.39-4.1M14 8a6 6 0 0 1-10.39 4.1" />
+      <path d="M13 1.5v3.5h-3.5M3 14.5v-3.5h3.5" />
+    </svg>
+  );
+}
+
+function CopyIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="5" y="5" width="8" height="8" rx="1.5" />
+      <path d="M3 11V3.5A.5.5 0 0 1 3.5 3H11" />
+    </svg>
+  );
+}
+
+function XIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 3l10 10M13 3L3 13" />
+    </svg>
+  );
+}
+
+function PlusIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M8 3v10M3 8h10" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M4 6l4 4 4-4" />
+    </svg>
+  );
+}
+
+function TickIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 8l3 3 7-7" />
+    </svg>
+  );
 }

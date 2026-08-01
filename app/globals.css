@@ -59,12 +59,37 @@ body {
 html,
 body {
   overscroll-behavior: none;
-  scrollbar-width: none;
 }
 
 html::-webkit-scrollbar,
 body::-webkit-scrollbar {
-  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* Workspace uses internal scroll containers only — surface a thin
+   scrollbar inside the app so users can see scrolling is available. */
+.app-scope {
+  scrollbar-width: thin;
+  scrollbar-color: var(--app-line) transparent;
+}
+
+.app-scope ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.app-scope ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.app-scope ::-webkit-scrollbar-thumb {
+  background: var(--app-line);
+  border-radius: 3px;
+}
+
+.app-scope ::-webkit-scrollbar-thumb:hover {
+  background: var(--app-muted);
 }
 
 ::selection {
