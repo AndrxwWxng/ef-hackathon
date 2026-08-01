@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
-import { generateTextDraft, getSource } from "../../../../lib/openai";
+
+import { runNewsletterAgent } from "../../../../lib/agents";
+import { getSource } from "../../../../lib/openai";
 
 export const runtime = "nodejs";
+export const maxDuration = 600;
 
 export async function POST(req: Request) {
   try {
@@ -10,13 +13,17 @@ export async function POST(req: Request) {
       writingSamples?: string[];
     };
     const source = getSource();
-    const text = await generateTextDraft({
-      kind: "newsletter",
+    const { text, screenshots } = await runNewsletterAgent({
       source,
       mood: body.mood,
       writingSamples: body.writingSamples,
     });
-    return NextResponse.json({ kind: "newsletter", text, source: source.week });
+    return NextResponse.json({
+      kind: "newsletter",
+      text,
+      source: source.week,
+      screenshots: screenshots ?? undefined,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });

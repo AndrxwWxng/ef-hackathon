@@ -59,6 +59,67 @@ type GenerationState = {
   error?: string;
 };
 
+type StageStatus = "pending" | "running" | "done" | "error";
+type StageGroup = "pull" | "ingest" | "generate";
+type Stage = {
+  id: string;
+  group: StageGroup;
+  label: string;
+  status: StageStatus;
+  startedAt?: number;
+  ms?: number;
+  detail?: string;
+};
+
+const GROUP_ORDER: StageGroup[] = ["pull", "ingest", "generate"];
+const GROUP_LABEL: Record<StageGroup, string> = {
+  pull: "Pull from GitHub",
+  ingest: "Ingest analysis",
+  generate: "Generate drafts",
+};
+
+const STAGE_PRESETS: { id: string; group: StageGroup; label: string }[] = [
+  { id: "pull.init", group: "pull", label: "Initialize pull" },
+  { id: "pull.clone", group: "pull", label: "Clone repository" },
+  { id: "pull.branch", group: "pull", label: "Resolve branch" },
+  { id: "pull.window", group: "pull", label: "Compute time window" },
+  { id: "pull.shape", group: "pull", label: "Collect counts" },
+  { id: "pull.structure", group: "pull", label: "Read repo structure" },
+  { id: "pull.narrative", group: "pull", label: "Capture commits" },
+  { id: "pull.synthesize", group: "pull", label: "Synthesize analysis" },
+  { id: "ingest.normalize", group: "ingest", label: "Normalize analysis" },
+  { id: "ingest.extract", group: "ingest", label: "Extract themes" },
+  { id: "ingest.summarize", group: "ingest", label: "Summarize context" },
+  { id: "ingest.store", group: "ingest", label: "Store source" },
+  { id: "generate.newsletter", group: "generate", label: "Draft newsletter" },
+  { id: "generate.linkedin", group: "generate", label: "Draft LinkedIn post" },
+  { id: "generate.x", group: "generate", label: "Draft X post" },
+];
+
+function initialStages(): Stage[] {
+  return STAGE_PRESETS.map((p) => ({
+    id: p.id,
+    group: p.group,
+    label: p.label,
+    status: "pending",
+  }));
+}
+
+function progressPercent(stages: Stage[]): number {
+  if (!stages.length) return 0;
+  const weights: Record<StageGroup, number> = { pull: 1, ingest: 1, generate: 2 };
+  let total = 0;
+  let done = 0;
+  for (const s of stages) {
+    const w = weights[s.group];
+    total += w;
+    if (s.status === "done") done += w;
+    else if (s.status === "running") done += w * 0.5;
+    else if (s.status === "error") done += 0;
+  }
+  return Math.round((done / total) * 100);
+}
+
 type ContextSummary = {
   sourceCount: number;
   words: number;
@@ -263,6 +324,8 @@ export default function AppHome() {
     new Set<ArtifactKind>(["newsletter", "linkedin", "x"]),
   );
   const [running, setRunning] = useState(false);
+  const [stages, setStages] = useState<Stage[]>([]);
+  const [stageLogs, setStageLogs] = useState<string[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
   const [context, setContext] = useState<ContextSummary | null>(null);
   const [loadingSources, setLoadingSources] = useState(false);
@@ -378,13 +441,118 @@ export default function AppHome() {
       setState({ status: "error", error: "Pick at least one artifact to generate." });
       return;
     }
-    setRunning(true);
-    const order: ArtifactKind[] = ["newsletter", "linkedin", "x"];
-    for (const t of order) {
-      if (!targets.has(t)) continue;
-      await generateOne(t);
+    const repo = sourceConfig.github.trim();
+    if (!repo) {
+      setState({ status: "error", error: "Add a GitHub repo (owner/repo or full URL) before running the week." });
+      return;
     }
-    setRunning(false);
+    setRunning(true);
+    setState({ status: "loading" });
+    setStages(initialStages());
+    setStageLogs([]);
+    setFeedback("");
+
+    const selectedTargets = (["newsletter", "linkedin", "x"] as ArtifactKind[]).filter((t) => targets.has(t));
+    const body = JSON.stringify({
+      repoUrl: repo,
+      targets: selectedTargets,
+      mood: sourceConfig.mood === "default" ? undefined : sourceConfig.mood,
+      writingSamples: writtenSamples,
+    });
+
+    let res: Response;
+    try {
+      res = await fetch("/app/api/run-week", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+    } catch (err) {
+      setRunning(false);
+      setState({ status: "error", error: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+
+    if (!res.ok || !res.body) {
+      setRunning(false);
+      const text = await res.text().catch(() => "");
+      setState({ status: "error", error: text || `run failed (${res.status})` });
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let sawError = false;
+
+    const handleEvent = (raw: string) => {
+      let evt: { type: string } & Record<string, unknown>;
+      try {
+        evt = JSON.parse(raw) as { type: string } & Record<string, unknown>;
+      } catch {
+        return;
+      }
+      if (evt.type === "stage") {
+        const stage = evt.stage as Stage;
+        setStages((prev) => {
+          const next = [...prev];
+          const i = next.findIndex((s) => s.id === stage.id);
+          if (i >= 0) next[i] = stage;
+          else next.push(stage);
+          return next;
+        });
+      } else if (evt.type === "log") {
+        const line = String(evt.line ?? "");
+        setStageLogs((prev) => [...prev.slice(-49), line]);
+      } else if (evt.type === "source") {
+        setStageLogs((prev) => [...prev.slice(-49), `stored source · ${String(evt.label ?? "")}`]);
+      } else if (evt.type === "draft") {
+        const kind = evt.kind as ArtifactKind;
+        const text = String(evt.text ?? "");
+        const metric = String(evt.metric ?? "");
+        const imageDataUrl = typeof evt.imageDataUrl === "string" ? evt.imageDataUrl : undefined;
+        setArtifacts((prev) =>
+          prev.map((a) =>
+            a.id === kind
+              ? { ...a, body: text, metric, imageDataUrl, generated: true }
+              : a,
+          ),
+        );
+      } else if (evt.type === "error") {
+        sawError = true;
+        setState({ status: "error", error: String(evt.message ?? "unknown error") });
+      } else if (evt.type === "complete") {
+        setState({ status: "idle" });
+      }
+    };
+
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx = buffer.indexOf("\n\n");
+        while (idx >= 0) {
+          const chunk = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          const lines = chunk.split("\n");
+          for (const line of lines) {
+            if (!line.startsWith("data:")) continue;
+            handleEvent(line.slice(5).trim());
+          }
+          idx = buffer.indexOf("\n\n");
+        }
+      }
+    } catch (err) {
+      if (!sawError) {
+        setState({ status: "error", error: err instanceof Error ? err.message : String(err) });
+      }
+    } finally {
+      setRunning(false);
+      if (!sawError) {
+        void refresh();
+      }
+    }
   }
 
   function toggleTarget(kind: ArtifactKind) {
@@ -978,6 +1146,16 @@ export default function AppHome() {
         </aside>
 
         <section className="flex flex-col gap-4">
+          {(stages.length > 0 || running) && (
+            <RunProgress
+              stages={stages}
+              running={running}
+              percent={progressPercent(stages)}
+              logs={stageLogs}
+              repo={sourceConfig.github}
+            />
+          )}
+
           <div
             role="tablist"
             aria-label="Artifacts"
@@ -1442,4 +1620,156 @@ function ChannelPreview({
       )}
     </div>
   );
+}
+
+function RunProgress({
+  stages,
+  running,
+  percent,
+  logs,
+  repo,
+}: {
+  stages: Stage[];
+  running: boolean;
+  percent: number;
+  logs: string[];
+  repo: string;
+}) {
+  const grouped = GROUP_ORDER.map((group) => ({
+    group,
+    items: stages.filter((s) => s.group === group),
+  }));
+  const overallLabel = running
+    ? "Running the week"
+    : percent >= 100
+      ? "Week complete"
+      : "Paused";
+  const currentGroup = GROUP_ORDER.find((g) =>
+    stages.some((s) => s.group === g && s.status === "running"),
+  );
+
+  return (
+    <section
+      aria-label="Run progress"
+      className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col gap-0.5">
+          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+            {repo || "GitHub"} · {overallLabel}
+          </span>
+          <span className="font-serif text-[1.1rem] font-medium tracking-[-0.01em] text-[var(--app-ink)]">
+            {currentGroup ? `${GROUP_LABEL[currentGroup]}…` : overallLabel}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[11px] tabular-nums text-[var(--app-muted)]">
+            {percent}%
+          </span>
+          <span
+            aria-hidden
+            className={
+              "h-1.5 w-1.5 rounded-full " +
+              (running
+                ? "bg-[var(--app-accent)] animate-pulse"
+                : percent >= 100
+                  ? "bg-[var(--positive)]"
+                  : "bg-[var(--app-muted)]")
+            }
+          />
+        </div>
+      </div>
+
+      <div
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+        className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--app-soft)]"
+      >
+        <div
+          className="h-full rounded-full bg-[var(--app-ink)] transition-[width] duration-300"
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        {grouped.map(({ group, items }) => (
+          <div
+            key={group}
+            className="flex flex-col gap-1.5 rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)]/40 p-3"
+          >
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                {GROUP_LABEL[group]}
+              </span>
+              <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
+                {items.filter((s) => s.status === "done").length}/{items.length}
+              </span>
+            </div>
+            <ul className="flex flex-col gap-1">
+              {items.map((stage) => (
+                <li key={stage.id} className="flex items-start gap-2 text-[11.5px]">
+                  <StageDot status={stage.status} />
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span
+                        className={
+                          "truncate " +
+                          (stage.status === "done"
+                            ? "text-[var(--app-ink)]"
+                            : stage.status === "error"
+                              ? "text-[#c23a2b]"
+                              : stage.status === "running"
+                                ? "text-[var(--app-ink)]"
+                                : "text-[var(--app-muted)]")
+                        }
+                      >
+                        {stage.label}
+                      </span>
+                      {typeof stage.ms === "number" && stage.ms > 0 && (
+                        <span className="shrink-0 font-mono text-[10px] tabular-nums text-[var(--app-muted)]">
+                          {(stage.ms / 1000).toFixed(1)}s
+                        </span>
+                      )}
+                    </div>
+                    {stage.detail && (
+                      <span className="truncate font-mono text-[10px] text-[var(--app-muted)]">
+                        {stage.detail}
+                      </span>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+
+      {logs.length > 0 && (
+        <details className="text-[11px] text-[var(--app-muted)]">
+          <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.16em]">
+            Live log ({logs.length})
+          </summary>
+          <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--app-line)] bg-[var(--app-soft)] p-3 text-[11px] leading-relaxed text-[var(--app-ink)]">
+            {logs.slice(-30).join("\n")}
+          </pre>
+        </details>
+      )}
+    </section>
+  );
+}
+
+function StageDot({ status }: { status: StageStatus }) {
+  const base = "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full";
+  if (status === "done") return <span aria-hidden className={`${base} bg-[var(--positive)]`} />;
+  if (status === "error") return <span aria-hidden className={`${base} bg-[#c23a2b]`} />;
+  if (status === "running")
+    return (
+      <span aria-hidden className="relative mt-1.5 grid h-2 w-2 shrink-0 place-items-center">
+        <span className="absolute inset-0 animate-ping rounded-full bg-[var(--app-accent)] opacity-60" />
+        <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-accent)]" />
+      </span>
+    );
+  return <span aria-hidden className={`${base} bg-[var(--app-line)]`} />;
 }
