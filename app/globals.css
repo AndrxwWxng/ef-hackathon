@@ -1,26 +1,58 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
+  --background: #fbfaf7;
   --foreground: #171717;
+  --muted: #f1efe9;
+  --border: #e7e3d8;
+  --muted-foreground: #6b6357;
+  --accent: #ff6a3d;
+  --accent-soft: #ffe2d6;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-muted-foreground: var(--muted-foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
+    --background: #0b0a09;
     --foreground: #ededed;
+    --muted: #15140f;
+    --border: #25231c;
+    --muted-foreground: #a8a094;
+    --accent: #ff7a4d;
+    --accent-soft: #2a1a14;
   }
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
+  background-image:
+    radial-gradient(
+      1100px circle at 12% -10%,
+      color-mix(in oklab, var(--accent) 22%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      900px circle at 95% 8%,
+      color-mix(in oklab, var(--accent-soft) 60%, transparent),
+      transparent 65%
+    ),
+    radial-gradient(
+      color-mix(in oklab, var(--foreground) 8%, transparent) 1px,
+      transparent 1px
+    );
+  background-size: auto, auto, 22px 22px;
+  background-position: 0 0, 0 0, 0 0;
+  background-attachment: fixed, fixed, fixed;
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
