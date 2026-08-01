@@ -1,16 +1,29 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+
+type Modality = "text" | "audio" | "video";
 
 type Source = {
   id: string;
+  modality: Modality;
   label: string;
-  value: string;
-  placeholder: string;
-  connected: boolean;
-  detail: string;
-  meta: string;
+  origin: string;
+  bytes?: number;
+  mimeType?: string;
+  durationMs?: number;
+  createdAt: string;
+  summary?: string;
+  bullets?: string[];
+  themes?: string[];
+  tone?: string;
+  keyPhrases?: { phrase: string; count: number; weight: number }[];
+  quotes?: string[];
+  transcriptPreview?: string;
+  status?: "ready" | "ingesting" | "error";
+  detail?: string;
+  errorMessage?: string;
 };
 
 type Artifact = {
@@ -23,44 +36,22 @@ type Artifact = {
   tone: string;
 };
 
-const sources: Source[] = [
-  {
-    id: "github",
-    label: "GitHub",
-    value: "multimail/api",
-    placeholder: "owner/repo",
-    connected: true,
-    detail: "owner/repo · 47 commits · 9 merged PRs",
-    meta: "commits · prs",
-  },
-  {
-    id: "docs",
-    label: "External docs",
-    value: "notion.so/sponsor-brief",
-    placeholder: "https://docs.example.com",
-    connected: true,
-    detail: "One linked brief · 2,140 tokens",
-    meta: "context",
-  },
-  {
-    id: "voice",
-    label: "Voice notes",
-    value: "3 dropped in Slack",
-    placeholder: "Drop an .mp3 or .m4a",
-    connected: true,
-    detail: "Transcribed · 3 min 12 sec total",
-    meta: "audio",
-  },
-  {
-    id: "writing",
-    label: "Writing samples",
-    value: "3 past posts",
-    placeholder: "Paste 2–3 example posts",
-    connected: true,
-    detail: "Used to calibrate tone",
-    meta: "voice",
-  },
-];
+type ContextSummary = {
+  sourceCount: number;
+  words: number;
+  minutes: number;
+  bullets: string[];
+  themes: string[];
+  tone: string;
+  phrases: { phrase: string; count: number }[];
+  body: string;
+};
+
+const MODALITY_META: Record<Modality, { label: string; meta: string; placeholder: string; accept?: string }> = {
+  text: { label: "Notes & docs", meta: "text", placeholder: "Paste notes, a doc, a brief…" },
+  audio: { label: "Voice notes", meta: "audio", placeholder: "Drop an .mp3, .m4a, .wav…", accept: "audio/*" },
+  video: { label: "Video", meta: "video", placeholder: "Drop an .mp4, .mov, .webm…", accept: "video/*" },
+};
 
 const runSizes = [
   { id: "small", label: "Newsletter", note: "1 source" },
@@ -104,20 +95,177 @@ const artifacts: Artifact[] = [
   },
 ];
 
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(reader.error ?? new Error("FileReader failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatBytes(bytes?: number): string {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatDuration(durationMs?: number): string {
+  if (!durationMs) return "";
+  const totalSeconds = Math.round(durationMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 1) return `${seconds}s`;
+  if (minutes < 60) return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${(minutes % 60).toString().padStart(2, "0")}m`;
+}
+
+function describeSource(source: Source): string {
+  const meta = MODALITY_META[source.modality];
+  if (source.status === "ingesting") return `${meta.label} · ingesting…`;
+  if (source.status === "error") return `${meta.label} · ${source.errorMessage ?? "failed"}`;
+  if (source.modality === "text") return `${meta.label} · ${source.transcriptPreview ? `${source.transcriptPreview.split(/\s+/).filter(Boolean).length} words` : "empty"}`;
+  if (source.modality === "audio") return `${meta.label} · ${formatDuration(source.durationMs) || "—"}`;
+  return `${meta.label} · ${formatDuration(source.durationMs) || "—"}`;
+}
+
+function summarizeKeyPhrases(source: Source): string {
+  if (!source.keyPhrases?.length) return "";
+  return source.keyPhrases.slice(0, 3).map((p) => p.phrase).join(" · ");
+}
+
 export default function AppHome() {
   const [activeId, setActiveId] = useState<Artifact["id"]>("newsletter");
   const [size, setSize] = useState<string>("full");
   const [running, setRunning] = useState(false);
+  const [sources, setSources] = useState<Source[]>([]);
+  const [context, setContext] = useState<ContextSummary | null>(null);
+  const [loadingSources, setLoadingSources] = useState(false);
+  const [composer, setComposer] = useState<{ modality: Modality; label: string; text: string } | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [feedback, setFeedback] = useState<string>("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [pendingFile, setPendingFile] = useState<{ modality: Modality; file: File } | null>(null);
 
   const active = useMemo(
     () => artifacts.find((a) => a.id === activeId) ?? artifacts[0],
     [activeId],
   );
 
+  const refresh = useCallback(async () => {
+    setLoadingSources(true);
+    try {
+      const [sourcesRes, contextRes] = await Promise.all([
+        fetch("/app/api/sources", { cache: "no-store" }),
+        fetch("/app/api/context", { cache: "no-store" }),
+      ]);
+      if (sourcesRes.ok) {
+        const json = (await sourcesRes.json()) as { sources: Source[] };
+        setSources(json.sources);
+      }
+      if (contextRes.ok) {
+        const json = (await contextRes.json()) as ContextSummary;
+        setContext(json);
+      }
+    } finally {
+      setLoadingSources(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // Initial fetch from the server. Treat the network as the external
+    // system: useEffect is the right primitive for syncing React state
+    // with what the server currently has. Suppressing the lint rule
+    // here because the alternative (eager setState in render) would
+    // re-render on every parent update.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    refresh().catch(() => undefined);
+  }, [refresh]);
+
   const handleRun = () => {
     setRunning(true);
     window.setTimeout(() => setRunning(false), 1400);
   };
+
+  const openComposer = (modality: Modality) => {
+    setComposer({ modality, label: "", text: "" });
+    setPendingFile(null);
+    setFeedback("");
+  };
+
+  const closeComposer = () => {
+    setComposer(null);
+    setPendingFile(null);
+    setFeedback("");
+  };
+
+  const handleFile = (file: File | null) => {
+    if (!composer || !file) return;
+    setPendingFile({ modality: composer.modality, file });
+    setComposer((prev) => (prev ? { ...prev, label: prev.label || file.name } : prev));
+  };
+
+  const submitComposer = async () => {
+    if (!composer) return;
+    setAdding(true);
+    setFeedback("");
+    try {
+      let body: Record<string, unknown>;
+      if (composer.modality === "text") {
+        if (!composer.text.trim()) {
+          setFeedback("paste some text first");
+          setAdding(false);
+          return;
+        }
+        body = { kind: "text", label: composer.label.trim() || "Pasted note", text: composer.text };
+      } else {
+        if (!pendingFile) {
+          setFeedback("pick a file first");
+          setAdding(false);
+          return;
+        }
+        const dataUrl = await readFileAsDataUrl(pendingFile.file);
+        body = {
+          kind: composer.modality,
+          label: composer.label.trim() || pendingFile.file.name,
+          fileName: pendingFile.file.name,
+          mimeType: pendingFile.file.type,
+          dataUrl,
+        };
+      }
+      const res = await fetch("/app/api/ingest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        setFeedback(json.error ?? "ingest failed");
+        setAdding(false);
+        return;
+      }
+      setFeedback("added");
+      await refresh();
+      closeComposer();
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const removeSource = async (id: string) => {
+    const res = await fetch(`/app/api/sources/${id}`, { method: "DELETE" });
+    if (res.ok) await refresh();
+  };
+
+  const triggerFilePicker = () => {
+    fileInputRef.current?.click();
+  };
+
+  const connectedCount = sources.filter((s) => s.status !== "error").length;
 
   return (
     <main className="mx-auto flex min-h-[calc(100vh-72px)] w-full max-w-[1240px] flex-col justify-center gap-5 px-6 py-6">
@@ -136,7 +284,9 @@ export default function AppHome() {
             Wrap the week into three drafts.
           </h1>
           <p className="max-w-xl text-[12.5px] leading-relaxed text-[var(--app-muted)]">
-            Aug 4 – Aug 10 · 4 sources connected · drafts generated locally · nothing sent without a click.
+            {context
+              ? `${context.sourceCount} source${context.sourceCount === 1 ? "" : "s"} · ${context.words} words · ${context.minutes.toFixed(1)} min ingested · drafts generated locally · nothing sent without a click.`
+              : "Aug 4 – Aug 10 · drafts generated locally · nothing sent without a click."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
@@ -178,10 +328,15 @@ export default function AppHome() {
                 Sources
               </h2>
               <span className="font-mono text-[11px] text-[var(--app-muted)]">
-                4 / 4
+                {connectedCount} / {sources.length || 0}
               </span>
             </div>
             <ul className="flex flex-col">
+              {sources.length === 0 && !loadingSources && (
+                <li className="py-3 text-[12px] text-[var(--app-muted)]">
+                  No sources yet — paste a note, drop a voice memo, or add a video clip.
+                </li>
+              )}
               {sources.map((source, i) => (
                 <li
                   key={source.id}
@@ -194,34 +349,101 @@ export default function AppHome() {
                     aria-hidden
                     className={
                       "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full " +
-                      (source.connected
-                        ? "bg-[var(--app-accent)]"
-                        : "border border-[var(--app-muted)]")
+                      (source.status === "error"
+                        ? "bg-[#c23a2b]"
+                        : "bg-[var(--app-accent)]")
                     }
                   />
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-[12.5px] font-medium text-[var(--app-ink)]">
+                      <span className="truncate text-[12.5px] font-medium text-[var(--app-ink)]">
                         {source.label}
                       </span>
                       <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
-                        {source.meta}
+                        {MODALITY_META[source.modality].meta}
                       </span>
                     </div>
                     <p className="truncate text-[11.5px] text-[var(--app-muted)]">
-                      {source.detail}
+                      {describeSource(source)}
                     </p>
+                    {summarizeKeyPhrases(source) && (
+                      <p className="truncate text-[11px] italic text-[var(--app-muted)]">
+                        {summarizeKeyPhrases(source)}
+                      </p>
+                    )}
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => removeSource(source.id)}
+                    className="grid h-5 w-5 shrink-0 place-items-center rounded-full text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)] hover:text-[var(--app-ink)]"
+                    aria-label={`Remove ${source.label}`}
+                  >
+                    <svg viewBox="0 0 16 16" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3 3l10 10M13 3L3 13" />
+                    </svg>
+                  </button>
                 </li>
               ))}
             </ul>
-            <button
-              type="button"
-              className="mt-0.5 inline-flex h-8 items-center justify-center rounded-full border border-[var(--app-line)] text-[12px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)]"
-            >
-              Add a source
-            </button>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {(Object.keys(MODALITY_META) as Modality[]).map((modality) => (
+                <button
+                  key={modality}
+                  type="button"
+                  onClick={() => openComposer(modality)}
+                  className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[var(--app-line)] px-3 text-[12px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)]"
+                >
+                  <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M8 3v10M3 8h10" />
+                  </svg>
+                  {MODALITY_META[modality].label}
+                </button>
+              ))}
+            </div>
           </section>
+
+          {context && context.sourceCount > 0 && (
+            <section className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
+              <div className="flex items-center justify-between">
+                <h2 className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                  Ingested context
+                </h2>
+                <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
+                  {context.tone}
+                </span>
+              </div>
+              {context.themes.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {context.themes.map((theme) => (
+                    <span
+                      key={theme}
+                      className="rounded-full bg-[var(--app-soft)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--app-ink)]"
+                    >
+                      {theme}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {context.bullets.length > 0 && (
+                <ul className="flex flex-col gap-1 text-[11.5px] leading-snug text-[var(--app-ink)]">
+                  {context.bullets.slice(0, 4).map((bullet, i) => (
+                    <li key={i} className="flex gap-2">
+                      <span aria-hidden className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-[var(--app-accent)]" />
+                      <span>{bullet}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <details className="text-[11px] text-[var(--app-muted)]">
+                <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.16em]">
+                  Raw context for the agent
+                </summary>
+                <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--app-line)] bg-[var(--app-soft)] p-3 text-[11px] leading-relaxed text-[var(--app-ink)]">
+                  {context.body}
+                </pre>
+              </details>
+            </section>
+          )}
 
           <section className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
             <div className="flex items-center justify-between">
@@ -384,6 +606,12 @@ export default function AppHome() {
                 <span>Voice · {active.tone.toLowerCase()}</span>
                 <span className="text-[var(--app-line)]">·</span>
                 <span>Length · {active.metric}</span>
+                {context && context.sourceCount > 0 && (
+                  <>
+                    <span className="text-[var(--app-line)]">·</span>
+                    <span>Context · {context.sourceCount} source{context.sourceCount === 1 ? "" : "s"}</span>
+                  </>
+                )}
               </div>
             </div>
           </article>
@@ -411,6 +639,122 @@ export default function AppHome() {
           </div>
         </section>
       </div>
+
+      {composer && (
+        <div
+          className="fixed inset-0 z-30 grid place-items-center bg-black/30 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Add ${MODALITY_META[composer.modality].label} source`}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) closeComposer();
+          }}
+        >
+          <div className="flex w-full max-w-lg flex-col gap-4 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-5 shadow-[0_30px_80px_-30px_rgba(15,23,42,0.4)]">
+            <div className="flex items-center justify-between">
+              <h3 className="font-serif text-[1.15rem] font-medium tracking-[-0.01em] text-[var(--app-ink)]">
+                Add {MODALITY_META[composer.modality].label}
+              </h3>
+              <button
+                type="button"
+                onClick={closeComposer}
+                className="grid h-7 w-7 place-items-center rounded-full text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)] hover:text-[var(--app-ink)]"
+                aria-label="Close"
+              >
+                <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 3l10 10M13 3L3 13" />
+                </svg>
+              </button>
+            </div>
+
+            <label className="flex flex-col gap-1.5">
+              <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                Label
+              </span>
+              <input
+                value={composer.label}
+                onChange={(event) => setComposer({ ...composer, label: event.target.value })}
+                placeholder={composer.modality === "text" ? "Brief, kickoff notes, sponsor email…" : "Voice memo, demo recording…"}
+                className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 text-[13px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
+              />
+            </label>
+
+            {composer.modality === "text" ? (
+              <label className="flex flex-col gap-1.5">
+                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                  Text
+                </span>
+                <textarea
+                  value={composer.text}
+                  onChange={(event) => setComposer({ ...composer, text: event.target.value })}
+                  placeholder={MODALITY_META.text.placeholder}
+                  rows={8}
+                  className="resize-y rounded-xl border border-[var(--app-line)] bg-transparent p-3 text-[13px] leading-relaxed text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
+                />
+              </label>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                  File
+                </span>
+                <button
+                  type="button"
+                  onClick={triggerFilePicker}
+                  className="flex flex-col items-start gap-1 rounded-xl border border-dashed border-[var(--app-line)] bg-[var(--app-soft)]/60 px-4 py-5 text-left transition-colors hover:border-[var(--app-ink)]"
+                >
+                  <span className="text-[13px] font-medium text-[var(--app-ink)]">
+                    {pendingFile ? pendingFile.file.name : MODALITY_META[composer.modality].placeholder}
+                  </span>
+                  <span className="text-[11px] text-[var(--app-muted)]">
+                    {pendingFile
+                      ? `${formatBytes(pendingFile.file.size)} · ${pendingFile.file.type || "unknown"}`
+                      : "Click to pick a file from your computer"}
+                  </span>
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={MODALITY_META[composer.modality].accept}
+                  className="hidden"
+                  onChange={(event) => handleFile(event.target.files?.[0] ?? null)}
+                />
+              </div>
+            )}
+
+            {feedback && (
+              <p
+                className={
+                  "text-[11.5px] " +
+                  (feedback === "added" ? "text-[var(--positive)]" : "text-[#c23a2b]")
+                }
+              >
+                {feedback === "added" ? "Added to your sources." : feedback}
+              </p>
+            )}
+
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeComposer}
+                className="inline-flex h-9 items-center justify-center rounded-full border border-[var(--app-line)] px-4 text-[12px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitComposer}
+                disabled={adding}
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-full bg-[var(--app-ink)] px-4 text-[12px] font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px disabled:opacity-50"
+              >
+                {adding ? "Ingesting…" : "Ingest"}
+                <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M3 8h10M9 4l4 4-4 4" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
