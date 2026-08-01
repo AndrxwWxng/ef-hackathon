@@ -4,13 +4,12 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import {
-  normalizeAudioToMp3,
   transcribeAudio,
   probeAudioDurationMs,
   type AudioError,
 } from "./audio";
 import { buildTakeaways, transcriptDurationMs, transcriptToText } from "./extract";
-import type { IngestTranscript, IngestTranscriptSegment } from "./types";
+import type { IngestTranscript } from "./types";
 
 const DEFAULT_FRAMES = 4;
 
@@ -104,6 +103,14 @@ async function extractKeyFrames(input: string | Buffer, workDir: string, baseNam
   } else {
     inputPath = input;
   }
+  let durationSec = 0;
+  if (isBuffer) {
+    durationSec = await probeVideoDurationBuffer(input as Buffer);
+  } else {
+    durationSec = (await probeVideoDuration(input as string)) / 1000;
+  }
+  const safeCount = Math.max(1, count);
+  const fps = durationSec > 0 ? Math.max(0.5, safeCount / durationSec) : safeCount;
   const pattern = path.join(workDir, `${baseName}.frame-%02d.jpg`);
   return new Promise((resolve) => {
     const proc = spawn("ffmpeg", [
@@ -111,9 +118,11 @@ async function extractKeyFrames(input: string | Buffer, workDir: string, baseNam
       "-i",
       inputPath,
       "-vf",
-      `fps=1/${Math.max(1, Math.round(60 / count))}`,
+      `fps=${fps.toFixed(3)},scale=640:-2`,
       "-frames:v",
-      String(count),
+      String(safeCount),
+      "-vsync",
+      "vfr",
       "-q:v",
       "4",
       pattern,
@@ -131,6 +140,29 @@ async function extractKeyFrames(input: string | Buffer, workDir: string, baseNam
       } catch {
         resolve([]);
       }
+    });
+  });
+}
+
+async function probeVideoDurationBuffer(buffer: Buffer): Promise<number> {
+  return new Promise((resolve) => {
+    const proc = spawn("ffprobe", [
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      "-",
+    ]);
+    proc.stdin.write(buffer);
+    proc.stdin.end();
+    const chunks: Buffer[] = [];
+    proc.stdout.on("data", (chunk) => chunks.push(chunk));
+    proc.on("error", () => resolve(0));
+    proc.on("close", () => {
+      const value = Number(Buffer.concat(chunks).toString("utf8").trim());
+      resolve(Number.isFinite(value) && value > 0 ? value : 0);
     });
   });
 }

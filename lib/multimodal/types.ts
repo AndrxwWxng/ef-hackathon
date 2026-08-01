@@ -1,4 +1,4 @@
-export type Modality = "text" | "audio" | "video";
+export type Modality = "text" | "audio" | "video" | "discord" | "slack";
 
 export type IngestStage = "receive" | "normalize" | "transcribe" | "extract" | "summarize";
 
@@ -20,6 +20,10 @@ export type IngestSourceMeta = {
   mimeType?: string;
   durationMs?: number;
   createdAt: string;
+  connectorChannel?: string;
+  connectorWorkspace?: string;
+  connectorMessageCount?: number;
+  connectorFetchedAt?: string;
 };
 
 export type IngestTranscriptSegment = {
@@ -104,7 +108,26 @@ export type VideoInput =
       origin?: string;
     };
 
-export type IngestInput = TextInput | AudioInput | VideoInput;
+export type DiscordInput = {
+  modality: "discord";
+  label: string;
+  token: string;
+  channelId: string;
+  limit?: number;
+  origin?: string;
+};
+
+export type SlackInput = {
+  modality: "slack";
+  label: string;
+  token: string;
+  channelId: string;
+  workspace?: string;
+  limit?: number;
+  origin?: string;
+};
+
+export type IngestInput = TextInput | AudioInput | VideoInput | DiscordInput | SlackInput;
 
 export type IngestResult = {
   id: string;
@@ -151,10 +174,14 @@ export const MODALITY_LABEL: Record<Modality, string> = {
   text: "text",
   audio: "voice",
   video: "video",
+  discord: "discord",
+  slack: "slack",
 };
 
 export const STAGES_BY_MODALITY: Record<Modality, IngestStage[]> = {
   text: ["receive", "normalize", "extract", "summarize"],
   audio: ["receive", "transcribe", "extract", "summarize"],
   video: ["receive", "transcribe", "extract", "summarize"],
+  discord: ["receive", "normalize", "extract", "summarize"],
+  slack: ["receive", "normalize", "extract", "summarize"],
 };

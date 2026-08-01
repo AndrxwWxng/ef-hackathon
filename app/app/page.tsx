@@ -1,16 +1,39 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+
+type Modality = "text" | "audio" | "video" | "discord" | "slack";
 
 type Source = {
   id: string;
+  modality: Modality;
   label: string;
-  value: string;
-  placeholder: string;
-  connected: boolean;
-  detail: string;
-  meta: string;
+  origin: string;
+  bytes?: number;
+  mimeType?: string;
+  durationMs?: number;
+  createdAt: string;
+  summary?: string;
+  bullets?: string[];
+  themes?: string[];
+  tone?: string;
+  keyPhrases?: { phrase: string; count: number; weight: number }[];
+  quotes?: string[];
+  transcriptPreview?: string;
+  status?: "ready" | "ingesting" | "error";
+  detail?: string;
+  errorMessage?: string;
+  connector?: {
+    kind: "discord" | "slack";
+    channelId: string;
+    channelName?: string;
+    workspace?: string;
+    memberCount?: number;
+    topic?: string;
+    lastFetchedAt?: string;
+    lastMessageCount?: number;
+  };
 };
 
 type ArtifactKind = "newsletter" | "linkedin" | "x";
@@ -31,44 +54,51 @@ type GenerationState = {
   error?: string;
 };
 
-const sources: Source[] = [
-  {
-    id: "github",
-    label: "GitHub",
-    value: "multimail/api",
-    placeholder: "owner/repo",
-    connected: true,
-    detail: "owner/repo · 47 commits · 9 merged PRs",
-    meta: "commits · prs",
+type ContextSummary = {
+  sourceCount: number;
+  words: number;
+  minutes: number;
+  bullets: string[];
+  themes: string[];
+  tone: string;
+  phrases: { phrase: string; count: number }[];
+  body: string;
+};
+
+const MODALITY_META: Record<Modality, { label: string; meta: string; placeholder: string; accept?: string; help: string }> = {
+  text: {
+    label: "Notes & docs",
+    meta: "text",
+    placeholder: "Paste notes, a doc, a brief…",
+    help: "Drop text in. We will normalize, extract themes, and surface key phrases.",
   },
-  {
-    id: "docs",
-    label: "External docs",
-    value: "notion.so/sponsor-brief",
-    placeholder: "https://docs.example.com",
-    connected: true,
-    detail: "One linked brief · 2,140 tokens",
-    meta: "context",
-  },
-  {
-    id: "voice",
+  audio: {
     label: "Voice notes",
-    value: "3 dropped in Slack",
-    placeholder: "Drop an .mp3 or .m4a",
-    connected: true,
-    detail: "Transcribed · 3 min 12 sec total",
     meta: "audio",
+    placeholder: "Drop an .mp3, .m4a, .wav…",
+    accept: "audio/*",
+    help: "Whisper transcribes audio locally when OPENAI_API_KEY is set; otherwise a deterministic mock transcript is used.",
   },
-  {
-    id: "writing",
-    label: "Writing samples",
-    value: "3 past posts",
-    placeholder: "Paste 2–3 example posts",
-    connected: true,
-    detail: "Used to calibrate tone",
-    meta: "voice",
+  video: {
+    label: "Video",
+    meta: "video",
+    placeholder: "Drop an .mp4, .mov, .webm…",
+    accept: "video/*",
+    help: "Frames are extracted and stitched into a transcript alongside any built-in audio track.",
   },
-];
+  discord: {
+    label: "Discord channel",
+    meta: "discord",
+    placeholder: "Channel ID + bot token",
+    help: "Add a Discord bot token and channel id. The bot must be a member of the channel. We pull the latest 50 messages by default.",
+  },
+  slack: {
+    label: "Slack channel",
+    meta: "slack",
+    placeholder: "Channel ID + bot token",
+    help: "Add a Slack bot token (xoxb-…) and channel id. The bot must be invited to the channel. We pull the latest 50 messages by default.",
+  },
+};
 
 const runSizes = [
   { id: "small", label: "Newsletter", note: "1 source" },
@@ -112,6 +142,73 @@ const initialArtifacts: Artifact[] = [
   },
 ];
 
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(reader.error ?? new Error("FileReader failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatBytes(bytes?: number): string {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatDuration(durationMs?: number): string {
+  if (!durationMs) return "";
+  const totalSeconds = Math.round(durationMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 1) return `${seconds}s`;
+  if (minutes < 60) return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${(minutes % 60).toString().padStart(2, "0")}m`;
+}
+
+function formatTimestamp(value?: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function describeSource(source: Source): string {
+  const meta = MODALITY_META[source.modality];
+  if (source.status === "ingesting") return `${meta.label} · ingesting…`;
+  if (source.status === "error") return `${meta.label} · ${source.errorMessage ?? "failed"}`;
+  if (source.modality === "text") {
+    return `${meta.label} · ${source.transcriptPreview ? `${source.transcriptPreview.split(/\s+/).filter(Boolean).length} words` : "empty"}`;
+  }
+  if (source.modality === "discord" || source.modality === "slack") {
+    const channel = source.connector?.channelName ? `#${source.connector.channelName}` : "channel";
+    const msgs = source.connector?.lastMessageCount;
+    const fetched = formatTimestamp(source.connector?.lastFetchedAt);
+    const parts = [
+      meta.label,
+      source.connector?.workspace ? `${source.connector.workspace} · ${channel}` : channel,
+      msgs ? `${msgs} msgs` : null,
+      fetched ? `synced ${fetched}` : null,
+    ].filter(Boolean);
+    return parts.join(" · ");
+  }
+  if (source.modality === "audio") return `${meta.label} · ${formatDuration(source.durationMs) || "—"}`;
+  return `${meta.label} · ${formatDuration(source.durationMs) || "—"}`;
+}
+
+function summarizeKeyPhrases(source: Source): string {
+  if (!source.keyPhrases?.length) return "";
+  return source.keyPhrases.slice(0, 3).map((p) => p.phrase).join(" · ");
+}
+
 const ENDPOINT_BY_KIND: Record<ArtifactKind, string> = {
   newsletter: "/api/generate/newsletter",
   linkedin: "/api/generate/linkedin",
@@ -125,10 +222,32 @@ function approxMetric(kind: ArtifactKind, text: string): string {
   return `${words} words`;
 }
 
+type ConnectorDraft = {
+  modality: "discord" | "slack";
+  token: string;
+  channelId: string;
+  workspace?: string;
+  label: string;
+  limit: number;
+};
+
+type ComposerState =
+  | { kind: "file"; modality: "text" | "audio" | "video"; label: string; text: string }
+  | { kind: "connector"; modality: "discord" | "slack"; draft: ConnectorDraft };
+
 export default function AppHome() {
   const [activeId, setActiveId] = useState<ArtifactKind>("newsletter");
   const [size, setSize] = useState<string>("full");
   const [running, setRunning] = useState(false);
+  const [sources, setSources] = useState<Source[]>([]);
+  const [context, setContext] = useState<ContextSummary | null>(null);
+  const [loadingSources, setLoadingSources] = useState(false);
+  const [composer, setComposer] = useState<ComposerState | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [feedback, setFeedback] = useState<string>("");
+  const [refreshingId, setRefreshingId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [pendingFile, setPendingFile] = useState<{ modality: "audio" | "video"; file: File } | null>(null);
   const [artifacts, setArtifacts] = useState<Artifact[]>(initialArtifacts);
   const [state, setState] = useState<GenerationState>({ status: "idle" });
 
@@ -136,6 +255,36 @@ export default function AppHome() {
     () => artifacts.find((a) => a.id === activeId) ?? artifacts[0],
     [activeId, artifacts],
   );
+
+  const refresh = useCallback(async () => {
+    setLoadingSources(true);
+    try {
+      const [sourcesRes, contextRes] = await Promise.all([
+        fetch("/app/api/sources", { cache: "no-store" }),
+        fetch("/app/api/context", { cache: "no-store" }),
+      ]);
+      if (sourcesRes.ok) {
+        const json = (await sourcesRes.json()) as { sources: Source[] };
+        setSources(json.sources);
+      }
+      if (contextRes.ok) {
+        const json = (await contextRes.json()) as ContextSummary;
+        setContext(json);
+      }
+    } finally {
+      setLoadingSources(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // Initial fetch from the server. Treat the network as the external
+    // system: useEffect is the right primitive for syncing React state
+    // with what the server currently has. Suppressing the lint rule
+    // here because the alternative (eager setState in render) would
+    // re-render on every parent update.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    refresh().catch(() => undefined);
+  }, [refresh]);
 
   async function generateOne(kind: ArtifactKind): Promise<void> {
     setState({ status: "loading" });
@@ -195,6 +344,138 @@ export default function AppHome() {
 
   const isGenerating = running || state.status === "loading";
 
+  const openComposer = (modality: Modality) => {
+    setFeedback("");
+    setPendingFile(null);
+    if (modality === "discord" || modality === "slack") {
+      setComposer({
+        kind: "connector",
+        modality,
+        draft: {
+          modality,
+          token: "",
+          channelId: "",
+          workspace: "",
+          label: "",
+          limit: 50,
+        },
+      });
+      return;
+    }
+    setComposer({ kind: "file", modality, label: "", text: "" });
+  };
+
+  const closeComposer = () => {
+    setComposer(null);
+    setPendingFile(null);
+    setFeedback("");
+  };
+
+  const handleFile = (file: File | null) => {
+    if (!composer || composer.kind !== "file" || composer.modality === "text" || !file) return;
+    setPendingFile({ modality: composer.modality, file });
+    setComposer((prev) => (prev && prev.kind === "file" ? { ...prev, label: prev.label || file.name } : prev));
+  };
+
+  const submitComposer = async () => {
+    if (!composer) return;
+    setAdding(true);
+    setFeedback("");
+    try {
+      let body: Record<string, unknown>;
+      if (composer.kind === "connector") {
+        const draft = composer.draft;
+        if (!draft.token.trim()) {
+          setFeedback("bot token is required");
+          setAdding(false);
+          return;
+        }
+        if (!draft.channelId.trim()) {
+          setFeedback("channel id is required");
+          setAdding(false);
+          return;
+        }
+        body = {
+          kind: draft.modality,
+          token: draft.token.trim(),
+          channelId: draft.channelId.trim(),
+          workspace: draft.workspace?.trim() || undefined,
+          label: draft.label.trim() || undefined,
+          limit: draft.limit,
+        };
+      } else if (composer.modality === "text") {
+        if (!composer.text.trim()) {
+          setFeedback("paste some text first");
+          setAdding(false);
+          return;
+        }
+        body = { kind: "text", label: composer.label.trim() || "Pasted note", text: composer.text };
+      } else {
+        if (!pendingFile) {
+          setFeedback("pick a file first");
+          setAdding(false);
+          return;
+        }
+        const dataUrl = await readFileAsDataUrl(pendingFile.file);
+        body = {
+          kind: composer.modality,
+          label: composer.label.trim() || pendingFile.file.name,
+          fileName: pendingFile.file.name,
+          mimeType: pendingFile.file.type,
+          dataUrl,
+        };
+      }
+      const res = await fetch("/app/api/ingest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        setFeedback(json.error ?? "ingest failed");
+        setAdding(false);
+        return;
+      }
+      setFeedback("added");
+      await refresh();
+      closeComposer();
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const removeSource = async (id: string) => {
+    const res = await fetch(`/app/api/sources/${id}`, { method: "DELETE" });
+    if (res.ok) await refresh();
+  };
+
+  const refreshSource = async (id: string) => {
+    setRefreshingId(id);
+    try {
+      const res = await fetch(`/app/api/sources/${id}/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setFeedback(json.error ?? "refresh failed");
+        return;
+      }
+      await refresh();
+    } finally {
+      setRefreshingId(null);
+    }
+  };
+
+  const triggerFilePicker = () => {
+    fileInputRef.current?.click();
+  };
+
+  const connectedCount = sources.filter((s) => s.status !== "error").length;
+
   return (
     <main className="mx-auto flex min-h-[calc(100vh-72px)] w-full max-w-[1240px] flex-col justify-center gap-5 px-6 py-6">
       <header className="flex flex-col gap-4 border-b border-[var(--app-line)] pb-4 sm:flex-row sm:items-end sm:justify-between">
@@ -212,7 +493,9 @@ export default function AppHome() {
             Wrap the week into three drafts.
           </h1>
           <p className="max-w-xl text-[12.5px] leading-relaxed text-[var(--app-muted)]">
-            Aug 4 – Aug 10 · 4 sources connected · gpt-5.6-terra for text, gpt-5.6 for images · nothing sent without a click.
+            {context
+              ? `${context.sourceCount} source${context.sourceCount === 1 ? "" : "s"} · ${context.words} words · ${context.minutes.toFixed(1)} min ingested · drafts generated locally · nothing sent without a click.`
+              : "Aug 4 – Aug 10 · drafts generated locally · nothing sent without a click."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
@@ -264,10 +547,15 @@ export default function AppHome() {
                 Sources
               </h2>
               <span className="font-mono text-[11px] text-[var(--app-muted)]">
-                4 / 4
+                {connectedCount} / {sources.length || 0}
               </span>
             </div>
             <ul className="flex flex-col">
+              {sources.length === 0 && !loadingSources && (
+                <li className="py-3 text-[12px] text-[var(--app-muted)]">
+                  No sources yet — paste a note, drop a voice memo, add a video clip, or connect a Discord or Slack channel.
+                </li>
+              )}
               {sources.map((source, i) => (
                 <li
                   key={source.id}
@@ -280,34 +568,128 @@ export default function AppHome() {
                     aria-hidden
                     className={
                       "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full " +
-                      (source.connected
-                        ? "bg-[var(--app-accent)]"
-                        : "border border-[var(--app-muted)]")
+                      (source.status === "error"
+                        ? "bg-[#c23a2b]"
+                        : "bg-[var(--app-accent)]")
                     }
                   />
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-[12.5px] font-medium text-[var(--app-ink)]">
+                      <span className="truncate text-[12.5px] font-medium text-[var(--app-ink)]">
                         {source.label}
                       </span>
                       <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
-                        {source.meta}
+                        {MODALITY_META[source.modality].meta}
                       </span>
                     </div>
                     <p className="truncate text-[11.5px] text-[var(--app-muted)]">
-                      {source.detail}
+                      {describeSource(source)}
                     </p>
+                    {summarizeKeyPhrases(source) && (
+                      <p className="truncate text-[11px] italic text-[var(--app-muted)]">
+                        {summarizeKeyPhrases(source)}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {source.connector && (
+                      <button
+                        type="button"
+                        onClick={() => refreshSource(source.id)}
+                        disabled={refreshingId === source.id}
+                        aria-label={`Refresh ${source.label}`}
+                        className="grid h-5 w-5 place-items-center rounded-full text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)] hover:text-[var(--app-ink)] disabled:opacity-50"
+                      >
+                        <svg
+                          viewBox="0 0 16 16"
+                          className={
+                            "h-3 w-3 " + (refreshingId === source.id ? "animate-spin" : "")
+                          }
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden
+                        >
+                          <path d="M2 8a6 6 0 0 1 10.39-4.1M14 8a6 6 0 0 1-10.39 4.1" />
+                          <path d="M13 1.5v3.5h-3.5M3 14.5v-3.5h3.5" />
+                        </svg>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeSource(source.id)}
+                      className="grid h-5 w-5 place-items-center rounded-full text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)] hover:text-[var(--app-ink)]"
+                      aria-label={`Remove ${source.label}`}
+                    >
+                      <svg viewBox="0 0 16 16" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 3l10 10M13 3L3 13" />
+                      </svg>
+                    </button>
                   </div>
                 </li>
               ))}
             </ul>
-            <button
-              type="button"
-              className="mt-0.5 inline-flex h-8 items-center justify-center rounded-full border border-[var(--app-line)] text-[12px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)]"
-            >
-              Add a source
-            </button>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {(Object.keys(MODALITY_META) as Modality[]).map((modality) => (
+                <button
+                  key={modality}
+                  type="button"
+                  onClick={() => openComposer(modality)}
+                  className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[var(--app-line)] px-3 text-[12px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)]"
+                >
+                  <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M8 3v10M3 8h10" />
+                  </svg>
+                  {MODALITY_META[modality].label}
+                </button>
+              ))}
+            </div>
           </section>
+
+          {context && context.sourceCount > 0 && (
+            <section className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
+              <div className="flex items-center justify-between">
+                <h2 className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                  Ingested context
+                </h2>
+                <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
+                  {context.tone}
+                </span>
+              </div>
+              {context.themes.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {context.themes.map((theme) => (
+                    <span
+                      key={theme}
+                      className="rounded-full bg-[var(--app-soft)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--app-ink)]"
+                    >
+                      {theme}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {context.bullets.length > 0 && (
+                <ul className="flex flex-col gap-1 text-[11.5px] leading-snug text-[var(--app-ink)]">
+                  {context.bullets.slice(0, 4).map((bullet, i) => (
+                    <li key={i} className="flex gap-2">
+                      <span aria-hidden className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-[var(--app-accent)]" />
+                      <span>{bullet}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <details className="text-[11px] text-[var(--app-muted)]">
+                <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.16em]">
+                  Raw context for the agent
+                </summary>
+                <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--app-line)] bg-[var(--app-soft)] p-3 text-[11px] leading-relaxed text-[var(--app-ink)]">
+                  {context.body}
+                </pre>
+              </details>
+            </section>
+          )}
 
           <section className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
             <div className="flex items-center justify-between">
@@ -487,6 +869,12 @@ export default function AppHome() {
                 <span>Voice · {active.tone.toLowerCase()}</span>
                 <span className="text-[var(--app-line)]">·</span>
                 <span>Length · {active.metric}</span>
+                {context && context.sourceCount > 0 && (
+                  <>
+                    <span className="text-[var(--app-line)]">·</span>
+                    <span>Context · {context.sourceCount} source{context.sourceCount === 1 ? "" : "s"}</span>
+                  </>
+                )}
               </div>
             </div>
           </article>
@@ -502,7 +890,7 @@ export default function AppHome() {
                 </svg>
               </span>
               <p className="text-[11.5px] leading-snug text-[var(--app-muted)]">
-                Drop a new voice note, paste a doc, or regenerate any single draft without rerunning the week.
+                Drop a new voice note, paste a doc, connect a Discord or Slack channel, or regenerate any single draft without rerunning the week.
               </p>
             </div>
             <Link
@@ -514,6 +902,233 @@ export default function AppHome() {
           </div>
         </section>
       </div>
+
+      {composer && (
+        <div
+          className="fixed inset-0 z-30 grid place-items-center bg-black/30 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Add ${composer.kind === "connector" ? MODALITY_META[composer.modality].label : MODALITY_META[composer.modality].label} source`}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) closeComposer();
+          }}
+        >
+          <div className="flex w-full max-w-lg flex-col gap-4 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-5 shadow-[0_30px_80px_-30px_rgba(15,23,42,0.4)]">
+            <div className="flex items-center justify-between">
+              <h3 className="font-serif text-[1.15rem] font-medium tracking-[-0.01em] text-[var(--app-ink)]">
+                Add {composer.kind === "connector" ? MODALITY_META[composer.modality].label : MODALITY_META[composer.modality].label}
+              </h3>
+              <button
+                type="button"
+                onClick={closeComposer}
+                className="grid h-7 w-7 place-items-center rounded-full text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)] hover:text-[var(--app-ink)]"
+                aria-label="Close"
+              >
+                <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 3l10 10M13 3L3 13" />
+                </svg>
+              </button>
+            </div>
+
+            {composer.kind === "connector" ? (
+              <>
+                <p className="text-[11.5px] leading-snug text-[var(--app-muted)]">
+                  {MODALITY_META[composer.modality].help}
+                </p>
+                <label className="flex flex-col gap-1.5">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                    Label
+                  </span>
+                  <input
+                    value={composer.draft.label}
+                    onChange={(event) =>
+                      setComposer((prev) =>
+                        prev && prev.kind === "connector"
+                          ? { ...prev, draft: { ...prev.draft, label: event.target.value } }
+                          : prev,
+                      )
+                    }
+                    placeholder={
+                      composer.draft.modality === "discord"
+                        ? "Discord · #shipping"
+                        : "Slack · #eng-weekly"
+                    }
+                    className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 text-[13px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                    {composer.draft.modality === "discord" ? "Bot token" : "Bot token (xoxb-…)"}
+                  </span>
+                  <input
+                    type="password"
+                    value={composer.draft.token}
+                    onChange={(event) =>
+                      setComposer((prev) =>
+                        prev && prev.kind === "connector"
+                          ? { ...prev, draft: { ...prev.draft, token: event.target.value } }
+                          : prev,
+                      )
+                    }
+                    placeholder={composer.draft.modality === "discord" ? "MTI0NTY3…" : "xoxb-…"}
+                    autoComplete="off"
+                    className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 font-mono text-[12.5px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                    Channel id
+                  </span>
+                  <input
+                    value={composer.draft.channelId}
+                    onChange={(event) =>
+                      setComposer((prev) =>
+                        prev && prev.kind === "connector"
+                          ? { ...prev, draft: { ...prev.draft, channelId: event.target.value } }
+                          : prev,
+                      )
+                    }
+                    placeholder={composer.draft.modality === "discord" ? "123456789012345678" : "C0123ABCD"}
+                    className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 font-mono text-[12.5px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
+                  />
+                </label>
+                {composer.draft.modality === "slack" && (
+                  <label className="flex flex-col gap-1.5">
+                    <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                      Workspace <span className="text-[var(--app-muted)]/70 normal-case tracking-normal">(optional)</span>
+                    </span>
+                    <input
+                      value={composer.draft.workspace ?? ""}
+                      onChange={(event) =>
+                        setComposer((prev) =>
+                          prev && prev.kind === "connector"
+                            ? { ...prev, draft: { ...prev.draft, workspace: event.target.value } }
+                            : prev,
+                        )
+                      }
+                      placeholder="acme-co"
+                      className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 text-[13px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
+                    />
+                  </label>
+                )}
+                <label className="flex flex-col gap-1.5">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                    Messages to pull
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    value={composer.draft.limit}
+                    onChange={(event) =>
+                      setComposer((prev) =>
+                        prev && prev.kind === "connector"
+                          ? {
+                              ...prev,
+                              draft: {
+                                ...prev.draft,
+                                limit: Math.max(1, Math.min(200, Number(event.target.value) || 1)),
+                              },
+                            }
+                          : prev,
+                      )
+                    }
+                    className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 font-mono text-[12.5px] text-[var(--app-ink)] outline-none transition-colors focus:border-[var(--app-ink)]"
+                  />
+                </label>
+              </>
+            ) : (
+              <>
+                <label className="flex flex-col gap-1.5">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                    Label
+                  </span>
+                  <input
+                    value={composer.label}
+                    onChange={(event) => setComposer({ ...composer, label: event.target.value })}
+                    placeholder={composer.modality === "text" ? "Brief, kickoff notes, sponsor email…" : "Voice memo, demo recording…"}
+                    className="h-10 rounded-xl border border-[var(--app-line)] bg-transparent px-3 text-[13px] text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
+                  />
+                </label>
+
+                {composer.modality === "text" ? (
+                  <label className="flex flex-col gap-1.5">
+                    <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                      Text
+                    </span>
+                    <textarea
+                      value={composer.text}
+                      onChange={(event) => setComposer({ ...composer, text: event.target.value })}
+                      placeholder={MODALITY_META.text.placeholder}
+                      rows={8}
+                      className="resize-y rounded-xl border border-[var(--app-line)] bg-transparent p-3 text-[13px] leading-relaxed text-[var(--app-ink)] outline-none transition-colors placeholder:text-[var(--app-muted)] focus:border-[var(--app-ink)]"
+                    />
+                  </label>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                      File
+                    </span>
+                    <button
+                      type="button"
+                      onClick={triggerFilePicker}
+                      className="flex flex-col items-start gap-1 rounded-xl border border-dashed border-[var(--app-line)] bg-[var(--app-soft)]/60 px-4 py-5 text-left transition-colors hover:border-[var(--app-ink)]"
+                    >
+                      <span className="text-[13px] font-medium text-[var(--app-ink)]">
+                        {pendingFile ? pendingFile.file.name : MODALITY_META[composer.modality].placeholder}
+                      </span>
+                      <span className="text-[11px] text-[var(--app-muted)]">
+                        {pendingFile
+                          ? `${formatBytes(pendingFile.file.size)} · ${pendingFile.file.type || "unknown"}`
+                          : "Click to pick a file from your computer"}
+                      </span>
+                    </button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept={MODALITY_META[composer.modality].accept}
+                      className="hidden"
+                      onChange={(event) => handleFile(event.target.files?.[0] ?? null)}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+
+            {feedback && (
+              <p
+                className={
+                  "text-[11.5px] " +
+                  (feedback === "added" ? "text-[var(--positive)]" : "text-[#c23a2b]")
+                }
+              >
+                {feedback === "added" ? "Added to your sources." : feedback}
+              </p>
+            )}
+
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeComposer}
+                className="inline-flex h-9 items-center justify-center rounded-full border border-[var(--app-line)] px-4 text-[12px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitComposer}
+                disabled={adding}
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-full bg-[var(--app-ink)] px-4 text-[12px] font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px disabled:opacity-50"
+              >
+                {adding ? "Connecting…" : composer.kind === "connector" ? "Connect" : "Ingest"}
+                <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M3 8h10M9 4l4 4-4 4" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
