@@ -1,26 +1,97 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f5f1e8;
+  --foreground: #15130f;
+  --muted: #ebe5d6;
+  --border: #d8d0bd;
+  --muted-foreground: #5e5648;
+  --accent: #e0532b;
+  --accent-deep: #b53a18;
+  --accent-soft: #f6d4c2;
+  --ink: #15130f;
+  --paper: #fbf6ea;
+  --rule: #1f1b14;
+  --positive: #2f6b3a;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-deep: var(--accent-deep);
+  --color-accent-soft: var(--accent-soft);
+  --color-ink: var(--ink);
+  --color-paper: var(--paper);
+  --color-rule: var(--rule);
   --font-sans: var(--font-geist-sans);
+  --font-serif: var(--font-fraunces);
   --font-mono: var(--font-geist-mono);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #0d0c0a;
+    --foreground: #f4ead8;
+    --muted: #1a1814;
+    --border: #2a2620;
+    --muted-foreground: #9c9282;
+    --accent: #ff6a3d;
+    --accent-deep: #d34a22;
+    --accent-soft: #3a1f15;
+    --ink: #f4ead8;
+    --paper: #15130f;
+    --rule: #f4ead8;
+    --positive: #6fb87a;
   }
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--paper);
+}
+
+@layer base {
+  .font-serif {
+    font-family: var(--font-serif), Georgia, serif;
+    font-feature-settings: "ss01", "ss02";
+  }
+}
+
+/* App workspace: a different visual plane than the landing.
+   Cool graphite / paper instead of the landing's warm cream. */
+.app-scope {
+  --app-bg: #eef0f4;
+  --app-panel: #fbfcfe;
+  --app-soft: #e5e8ef;
+  --app-line: #d8dde6;
+  --app-grid: #dde2eb;
+  --app-ink: #0f172a;
+  --app-muted: #5b6478;
+  --app-paper: #fbfcfe;
+  --app-accent: #e0532b;
+}
+
+@media (prefers-color-scheme: dark) {
+  .app-scope {
+    --app-bg: #0b0d12;
+    --app-panel: #12151c;
+    --app-soft: #1a1e27;
+    --app-line: #232834;
+    --app-grid: #1a1e27;
+    --app-ink: #eef0f4;
+    --app-muted: #8a93a6;
+    --app-paper: #0f172a;
+    --app-accent: #ff6a3d;
+  }
 }
