@@ -17,14 +17,14 @@ function ArtifactMockup() {
         </span>
       </div>
 
-      <div className="grid grid-cols-3 divide-x divide-[var(--border)]">
+      <div className="grid divide-y divide-[var(--border)]">
         <div className="flex flex-col gap-3 p-5">
           <div className="flex items-center justify-between">
             <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--muted-foreground)]">newsletter</span>
             <span className="font-mono text-[10px] text-[var(--muted-foreground)]">487 words</span>
           </div>
           <div className="font-serif text-[15px] font-medium leading-snug">
-            What we shipped this week — a faster ingest path, two integration fixes, and a quieter dashboard.
+            What we shipped this week: a faster ingest path, two integration fixes, and a quieter dashboard.
           </div>
           <div className="space-y-1.5 text-[11.5px] leading-relaxed text-[var(--muted-foreground)]">
             <div className="h-2 w-full rounded bg-[var(--muted)]" />
@@ -101,7 +101,7 @@ export default function Landing() {
             Turn a week of dev work into a sponsor-ready update.
           </h1>
           <p className="max-w-xl text-[1.1rem] leading-relaxed text-[var(--muted-foreground)] sm:text-[1.15rem]">
-            Multimail reads the week from your repos and notes, then writes three matched drafts — a
+            Multimail reads the week from your repos and notes, then writes three matched drafts: a
             newsletter, a LinkedIn post, and an X post. Same week, three depths, one story your
             partners can actually read.
           </p>
@@ -167,7 +167,7 @@ export default function Landing() {
             Matched drafts from one run.
           </div>
           <p className="text-sm leading-relaxed text-[var(--muted-foreground)]">
-            Newsletter, LinkedIn, and X. Each reads at the depth its channel expects — from the same source.
+            Newsletter, LinkedIn, and X. Each reads at the depth its channel expects, from the same source.
           </p>
         </div>
       </section>
@@ -189,7 +189,7 @@ export default function Landing() {
               {
                 n: "02",
                 title: "Group it the way you'd write it.",
-                body: "Weekly themes surface on their own — not a flat dump of every commit. The model picks the things worth saying out loud and skips the noise.",
+                body: "Weekly themes surface on their own, not a flat dump of every commit. The model picks the things worth saying out loud and skips the noise.",
               },
               {
                 n: "03",
@@ -264,7 +264,7 @@ export default function Landing() {
               },
               {
                 title: "Voice stays yours.",
-                body: "We use your pasted samples to calibrate tone. The drafts read like your team — because they read from your team's words.",
+                body: "We use your pasted samples to calibrate tone. The drafts read like your team, because they read from your team's words.",
               },
               {
                 title: "Edits are first-class.",
