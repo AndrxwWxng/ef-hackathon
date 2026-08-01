@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 
 import { NewsletterPreview } from "./_components/NewsletterPreview";
 import { LinkedInPreview } from "./_components/LinkedInPreview";
@@ -381,9 +380,9 @@ export default function AppHome() {
     }
     setRunning(true);
     const order: ArtifactKind[] = ["newsletter", "linkedin", "x"];
-    for (const t of order) {
-      if (!targets.has(t)) continue;
-      await generateOne(t);
+    for (const target of order) {
+      if (!targets.has(target)) continue;
+      await generateOne(target);
     }
     setRunning(false);
   }
@@ -1072,6 +1071,22 @@ export default function AppHome() {
                   <span>{context.sourceCount} source{context.sourceCount === 1 ? "" : "s"}</span>
                 </>
               )}
+              <p className="whitespace-pre-wrap font-serif text-[1.05rem] leading-[1.45] text-[var(--app-ink)] sm:text-[1.15rem]">
+                {active.body}
+              </p>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-[var(--app-line)] pt-3 font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                <span>Source · week 32</span>
+                <span className="text-[var(--app-line)]">·</span>
+                <span>Voice · {active.tone.toLowerCase()}</span>
+                <span className="text-[var(--app-line)]">·</span>
+                <span>Length · {active.metric}</span>
+                {context && context.sourceCount > 0 && (
+                  <>
+                    <span className="text-[var(--app-line)]">·</span>
+                    <span>Context · {context.sourceCount} source{context.sourceCount === 1 ? "" : "s"}</span>
+                  </>
+                )}
+              </div>
             </div>
           </article>
         </section>
