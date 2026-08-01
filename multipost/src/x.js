@@ -97,15 +97,13 @@ export async function postToX(text, opts = {}) {
     : { text };
 
   try {
-    return client.v2.tweet(payload).then((res) => {
-      const id = res?.data?.id;
-      if (!id) throw new XPayloadError('X returned no tweet id');
-      return { id, url: `https://x.com/i/status/${id}` };
-    });
+    const res = await client.v2.tweet(payload);
+    const id = res?.data?.id;
+    if (!id) throw new XPayloadError('X returned no tweet id');
+    return { id, url: `https://x.com/i/status/${id}` };
   } catch (err) {
-    // Synchronous throw (e.g. bad creds before the request is sent)
     if (err instanceof XAuthError || err instanceof XPayloadError) throw err;
-    return Promise.reject(classifyTwitterError(err));
+    throw classifyTwitterError(err);
   }
 }
 

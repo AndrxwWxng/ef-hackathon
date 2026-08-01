@@ -106,20 +106,20 @@ export default function Landing() {
             partners can actually read.
           </p>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <a
-              href="#waitlist"
+            <Link
+              href="/app"
               className="group inline-flex h-12 items-center justify-center gap-2 rounded-full bg-[var(--ink)] px-6 text-sm font-medium text-[var(--paper)] transition-transform hover:-translate-y-px"
             >
-              Join the waitlist
+              Open the app
               <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M3 8h10M9 4l4 4-4 4" />
               </svg>
-            </a>
+            </Link>
             <Link
-              href="/app"
+              href="#how"
               className="inline-flex h-12 items-center justify-center rounded-full border border-[var(--rule)]/20 bg-[var(--paper)] px-6 text-sm font-medium text-[var(--ink)] transition-colors hover:border-[var(--ink)]"
             >
-              Preview the app
+              How it works
             </Link>
           </div>
           <div className="flex flex-wrap items-center gap-2 pt-2 text-[var(--muted-foreground)]">
@@ -225,7 +225,7 @@ export default function Landing() {
               </span>
               <div className="text-sm">
                 <div className="font-medium text-[var(--paper)]">Maya K.</div>
-                <div className="text-[var(--paper)]/60">Engineering lead, 6-person team · pilot access</div>
+                <div className="text-[var(--paper)]/60">Engineering lead, 6-person team</div>
               </div>
             </div>
           </div>
@@ -281,41 +281,44 @@ export default function Landing() {
       </section>
 
       <section
-        id="waitlist"
-        className="mt-8 mb-20 grid gap-10 rounded-2xl border border-[var(--border)] bg-[var(--paper)] p-8 sm:p-12 lg:grid-cols-12 lg:gap-12"
+        id="how"
+        className="grid gap-10 border-t border-[var(--border)] py-20 lg:grid-cols-12"
       >
-        <div className="flex flex-col gap-5 lg:col-span-7">
-          <div className="font-serif text-[1.8rem] font-medium leading-[1.05] tracking-[-0.01em] sm:text-[2.2rem]">
-            We&apos;re opening access to small dev teams first.
+        <div className="lg:col-span-5">
+          <div className="font-serif text-[1.6rem] font-medium leading-[1.05] tracking-[-0.01em] sm:text-[1.9rem]">
+            How it works.
           </div>
-          <p className="max-w-xl text-[1rem] leading-relaxed text-[var(--muted-foreground)]">
-            Drop your work email. We&apos;ll send an invite when there&apos;s room and a short note when it&apos;s your
-            turn. No drip campaigns, no &ldquo;10 tips to write better updates.&rdquo;
-          </p>
         </div>
-        <div className="flex flex-col gap-3 lg:col-span-5 lg:justify-center">
-          <form className="flex flex-col gap-3 sm:flex-row" action="#" method="post">
-            <label htmlFor="waitlist-email" className="sr-only">
-              Email
-            </label>
-            <input
-              id="waitlist-email"
-              name="email"
-              type="email"
-              required
-              placeholder="you@team.com"
-              className="h-12 flex-1 rounded-full border border-[var(--border)] bg-transparent px-5 text-sm outline-none transition-colors placeholder:text-[var(--muted-foreground)] focus:border-[var(--ink)]"
-            />
-            <button
-              type="submit"
-              className="inline-flex h-12 items-center justify-center rounded-full bg-[var(--accent)] px-6 text-sm font-medium text-[var(--paper)] transition-transform hover:-translate-y-px"
-            >
-              Request invite
-            </button>
-          </form>
-          <p className="text-xs text-[var(--muted-foreground)]">
-            ~120 teams on the list · first invites going out next sprint.
-          </p>
+        <div className="lg:col-span-7">
+          <ol className="flex flex-col divide-y divide-[var(--border)] border-y border-[var(--border)]">
+            {[
+              {
+                n: "01",
+                title: "Pull the week.",
+                body: "Commits, merged PRs, the voice notes you dropped in Slack, the doc you pasted in. Multimail treats your repos as the source of truth and the rest as seasoning.",
+              },
+              {
+                n: "02",
+                title: "Group it the way you'd write it.",
+                body: "Weekly themes surface on their own, not a flat dump of every commit. The model picks the things worth saying out loud and skips the noise.",
+              },
+              {
+                n: "03",
+                title: "Hand you three drafts.",
+                body: "A newsletter for sponsors who want the picture. A LinkedIn post for partners in the feed. An X post for the engineers in your replies. Same week, matched depths.",
+              },
+            ].map((step) => (
+              <li key={step.n} className="grid grid-cols-[3.5rem_1fr] gap-4 py-7">
+                <div className="font-mono text-[13px] text-[var(--muted-foreground)]">{step.n}</div>
+                <div className="flex flex-col gap-2">
+                  <div className="font-serif text-[1.2rem] font-medium leading-snug">{step.title}</div>
+                  <p className="max-w-prose text-[0.97rem] leading-relaxed text-[var(--muted-foreground)]">
+                    {step.body}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ol>
         </div>
       </section>
 
