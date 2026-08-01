@@ -105,7 +105,6 @@ export async function postToLinkedIn(text, opts = {}) {
     return { id: urn, url: `https://www.linkedin.com/feed/update/${encodeUrnForUrl(urn)}/` };
   }
 
-  // Pull a useful error message out of LinkedIn's JSON body if any.
   let detail = '';
   try {
     const j = await res.json();
