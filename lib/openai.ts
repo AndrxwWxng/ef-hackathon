@@ -26,20 +26,66 @@ export function buildSourceContext(source: WeeklySource): string {
 
 type DraftKind = "newsletter" | "linkedin" | "x";
 
-const KIND_INSTRUCTIONS: Record<DraftKind, string> = {
-  newsletter:
-    "Write a 350–550 word sponsor-facing newsletter. Structure: a one-line headline, a 2-sentence intro that states the headline plainly, then 3–5 short sections with bolded section headers covering the week's shipped work, a 'what is next' beat, and a closing line. Tone is calm, partner-facing, and specific. Reference concrete items from the source. Do not invent partners, metrics, or testimonials.",
-  linkedin:
-    "Write a LinkedIn post of roughly 800–1,400 characters. Open with the single most interesting shipped item in one short line, then 3–5 short paragraphs that surface the other wins without bullet-list formatting. Close with a one-sentence forward-looking line. Tone is direct and status-forward. Reference concrete items from the source. Do not invent partners, metrics, or testimonials.",
-  x: "Write a single X (Twitter) post, 240–280 characters total. Lead with the week's main shipping beat, weave in one or two concrete details, end on a forward note. Lowercase is fine. No hashtags unless natural. Do not invent partners, metrics, or testimonials.",
+export type DraftRequest = {
+  kind: DraftKind;
+  source: WeeklySource;
+  mood?: string;
+  writingSamples?: string[];
 };
 
+const KIND_INSTRUCTIONS: Record<DraftKind, string> = {
+  newsletter:
+    "Write a 350–550 word sponsor-facing newsletter. Structure: a one-line headline, a 2-sentence intro that states the headline plainly, then 3–5 short sections with bolded section headers covering the week's shipped work, a 'what is next' beat, and a closing line. Tone is calm, partner-facing, and specific. Use Markdown for structure (headings with ##, bold with **, lists with -). Reference concrete items from the source. Do not invent partners, metrics, or testimonials.",
+  linkedin:
+    "Write a LinkedIn post of roughly 800–1,400 characters. Open with the single most interesting shipped item in one short line, then 3-5 short paragraphs that surface the other wins without bullet-list formatting. Close with a one-sentence forward-looking line. Use minimal Markdown (line breaks, occasional **bold** for emphasis). Tone is direct and status-forward. Reference concrete items from the source. Do not invent partners, metrics, or testimonials.",
+  x: "Write a single X (Twitter) post, 240-280 characters total. Lead with the week's main shipping beat, weave in one or two concrete details, end on a forward note. Lowercase is fine. No hashtags unless natural. Do not invent partners, metrics, or testimonials.",
+};
+
+const TONE_INSTRUCTIONS: Record<string, string> = {
+  default: "Use a natural, professional tone.",
+  "calm and measured": "Use a calm, measured tone. Short sentences. No hype words.",
+  "warm and personal": "Use a warm, first-person, personal tone. Speak directly to the reader.",
+  "direct and punchy": "Use a direct, punchy, status-forward tone. Lead with the news.",
+  "witty and a bit dry": "Use a witty, lightly dry tone. Occasional subtle humor is welcome; do not force jokes.",
+  "playful and energetic": "Use a playful, energetic tone. Enthusiastic but not breathless.",
+  "technical and matter-of-fact": "Use a technical, matter-of-fact tone. Engineer-coded, references files/PRs by name when useful.",
+  "visionary and forward-looking": "Use a visionary, forward-looking tone. Frame the week's work inside a longer arc.",
+};
+
+function resolveToneInstruction(mood?: string): string {
+  if (!mood) return TONE_INSTRUCTIONS.default;
+  const key = mood.trim().toLowerCase();
+  if (TONE_INSTRUCTIONS[key]) return TONE_INSTRUCTIONS[key];
+  return `Use a tone that matches this mood/voice guidance: "${mood}". Apply it consistently across the draft.`;
+}
+
+export async function generateTextDraft(req: DraftRequest): Promise<string>;
 export async function generateTextDraft(
   kind: DraftKind,
   source: WeeklySource,
+): Promise<string>;
+export async function generateTextDraft(
+  arg1: DraftKind | DraftRequest,
+  maybeSource?: WeeklySource,
 ): Promise<string> {
+  const req: DraftRequest =
+    typeof arg1 === "string"
+      ? { kind: arg1, source: maybeSource ?? getSource() }
+      : arg1;
   const client = getOpenAIClient();
-  const context = buildSourceContext(source);
+  const context = buildSourceContext(req.source);
+  const writtenSamples = (req.writingSamples ?? []).filter((s) => s.trim().length > 0);
+
+  const sampleBlock =
+    writtenSamples.length > 0
+      ? `\n\nWriting samples from the team (calibrate voice, do not lift sentences verbatim):\n` +
+        writtenSamples
+          .map((s, i) => `Sample ${i + 1}:\n${s.trim()}`)
+          .join("\n\n")
+      : "";
+
+  const toneLine = resolveToneInstruction(req.mood);
+
   const completion = await client.chat.completions.create({
     model: TEXT_MODEL,
     messages: [
@@ -56,7 +102,10 @@ export async function generateTextDraft(
         content:
           `Source data for the week (do not invent beyond this):\n\n` +
           context +
-          `\n\nTask: ${KIND_INSTRUCTIONS[kind]}\n\n` +
+          sampleBlock +
+          `\n\nTarget mood/tone (apply throughout): ${req.mood ? req.mood : "(no override, use neutral default)"}. ` +
+          `Guidance: ${toneLine}.` +
+          `\n\nTask: ${KIND_INSTRUCTIONS[req.kind]}\n\n` +
           `Return ONLY the draft text, no preamble, no labels.`,
       },
     ],

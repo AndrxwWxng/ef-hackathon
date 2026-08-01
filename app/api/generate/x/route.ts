@@ -3,10 +3,19 @@ import { generateTextDraft, getSource } from "../../../../lib/openai";
 
 export const runtime = "nodejs";
 
-export async function POST() {
+export async function POST(req: Request) {
   try {
+    const body = (await req.json().catch(() => ({}))) as {
+      mood?: string;
+      writingSamples?: string[];
+    };
     const source = getSource();
-    const text = await generateTextDraft("x", source);
+    const text = await generateTextDraft({
+      kind: "x",
+      source,
+      mood: body.mood,
+      writingSamples: body.writingSamples,
+    });
     return NextResponse.json({ kind: "x", text, source: source.week });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
