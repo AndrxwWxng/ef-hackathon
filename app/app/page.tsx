@@ -255,7 +255,7 @@ export default function AppHome() {
   const [state, setState] = useState<GenerationState>({ status: "idle" });
   const [configOpen, setConfigOpen] = useState(false);
   const [sourceConfig, setSourceConfig] = useState<SourceConfig>({
-    github: "multimail/api",
+    github: "https://github.com/AndrxwWxng/ef-hackathon",
     writingSamples: [
       "We shipped a faster ingest path (4x), closed two long-standing integration gaps, and softened the digest tone.",
     ],
@@ -341,12 +341,12 @@ export default function AppHome() {
         prev.map((a) =>
           a.id === kind
             ? {
-                ...a,
-                body: textJson.text,
-                metric: approxMetric(kind, textJson.text),
-                imageDataUrl,
-                generated: true,
-              }
+              ...a,
+              body: textJson.text,
+              metric: approxMetric(kind, textJson.text),
+              imageDataUrl,
+              generated: true,
+            }
             : a,
         ),
       );
@@ -384,175 +384,174 @@ export default function AppHome() {
       return next;
     });
   }
+    function toggleTarget(kind: ArtifactKind) {
+      setTargets((prev) => {
+        const next = new Set(prev);
+        if (next.has(kind)) next.delete(kind);
+        else next.add(kind);
+        return next;
+      });
+    }
 
-  function toggleTarget(kind: ArtifactKind) {
-    setTargets((prev) => {
-      const next = new Set(prev);
-      if (next.has(kind)) next.delete(kind);
-      else next.add(kind);
-      return next;
-    });
-  }
+    function updateSample(idx: number, value: string) {
+      setSourceConfig((prev) => {
+        const samples = [...prev.writingSamples];
+        samples[idx] = value;
+        return { ...prev, writingSamples: samples };
+      });
+    }
 
-  function updateSample(idx: number, value: string) {
-    setSourceConfig((prev) => {
-      const samples = [...prev.writingSamples];
-      samples[idx] = value;
-      return { ...prev, writingSamples: samples };
-    });
-  }
+    function addSample() {
+      setSourceConfig((prev) => ({
+        ...prev,
+        writingSamples: [...prev.writingSamples, ""],
+      }));
+    }
 
-  function addSample() {
-    setSourceConfig((prev) => ({
-      ...prev,
-      writingSamples: [...prev.writingSamples, ""],
-    }));
-  }
+    function removeSample(idx: number) {
+      setSourceConfig((prev) => ({
+        ...prev,
+        writingSamples: prev.writingSamples.filter((_, i) => i !== idx),
+      }));
+    }
 
-  function removeSample(idx: number) {
-    setSourceConfig((prev) => ({
-      ...prev,
-      writingSamples: prev.writingSamples.filter((_, i) => i !== idx),
-    }));
-  }
+    async function handleRegenerate() {
+      setRunning(true);
+      await generateOne(activeId);
+      setRunning(false);
+    }
 
-  async function handleRegenerate() {
-    setRunning(true);
-    await generateOne(activeId);
-    setRunning(false);
-  }
+    const isGenerating = running || state.status === "loading";
 
-  const isGenerating = running || state.status === "loading";
-
-  const openComposer = (modality: Modality) => {
-    setFeedback("");
-    setPendingFile(null);
-    if (modality === "discord" || modality === "slack") {
-      setComposer({
-        kind: "connector",
-        modality,
-        draft: {
+    const openComposer = (modality: Modality) => {
+      setFeedback("");
+      setPendingFile(null);
+      if (modality === "discord" || modality === "slack") {
+        setComposer({
+          kind: "connector",
           modality,
-          token: "",
-          channelId: "",
-          workspace: "",
-          label: "",
-          limit: 50,
-        },
-      });
-      return;
-    }
-    setComposer({ kind: "file", modality, label: "", text: "" });
-  };
-
-  const closeComposer = () => {
-    setComposer(null);
-    setPendingFile(null);
-    setFeedback("");
-  };
-
-  const handleFile = (file: File | null) => {
-    if (!composer || composer.kind !== "file" || composer.modality === "text" || !file) return;
-    setPendingFile({ modality: composer.modality, file });
-    setComposer((prev) => (prev && prev.kind === "file" ? { ...prev, label: prev.label || file.name } : prev));
-  };
-
-  const submitComposer = async () => {
-    if (!composer) return;
-    setAdding(true);
-    setFeedback("");
-    try {
-      let body: Record<string, unknown>;
-      if (composer.kind === "connector") {
-        const draft = composer.draft;
-        if (!draft.token.trim()) {
-          setFeedback("bot token is required");
-          setAdding(false);
-          return;
-        }
-        if (!draft.channelId.trim()) {
-          setFeedback("channel id is required");
-          setAdding(false);
-          return;
-        }
-        body = {
-          kind: draft.modality,
-          token: draft.token.trim(),
-          channelId: draft.channelId.trim(),
-          workspace: draft.workspace?.trim() || undefined,
-          label: draft.label.trim() || undefined,
-          limit: draft.limit,
-        };
-      } else if (composer.modality === "text") {
-        if (!composer.text.trim()) {
-          setFeedback("paste some text first");
-          setAdding(false);
-          return;
-        }
-        body = { kind: "text", label: composer.label.trim() || "Pasted note", text: composer.text };
-      } else {
-        if (!pendingFile) {
-          setFeedback("pick a file first");
-          setAdding(false);
-          return;
-        }
-        const dataUrl = await readFileAsDataUrl(pendingFile.file);
-        body = {
-          kind: composer.modality,
-          label: composer.label.trim() || pendingFile.file.name,
-          fileName: pendingFile.file.name,
-          mimeType: pendingFile.file.type,
-          dataUrl,
-        };
+          draft: {
+            modality,
+            token: "",
+            channelId: "",
+            workspace: "",
+            label: "",
+            limit: 50,
+          },
+        });
+        return;
       }
-      const res = await fetch("/app/api/ingest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const json = (await res.json()) as { error?: string };
-      if (!res.ok) {
-        setFeedback(json.error ?? "ingest failed");
+      setComposer({ kind: "file", modality, label: "", text: "" });
+    };
+
+    const closeComposer = () => {
+      setComposer(null);
+      setPendingFile(null);
+      setFeedback("");
+    };
+
+    const handleFile = (file: File | null) => {
+      if (!composer || composer.kind !== "file" || composer.modality === "text" || !file) return;
+      setPendingFile({ modality: composer.modality, file });
+      setComposer((prev) => (prev && prev.kind === "file" ? { ...prev, label: prev.label || file.name } : prev));
+    };
+
+    const submitComposer = async () => {
+      if (!composer) return;
+      setAdding(true);
+      setFeedback("");
+      try {
+        let body: Record<string, unknown>;
+        if (composer.kind === "connector") {
+          const draft = composer.draft;
+          if (!draft.token.trim()) {
+            setFeedback("bot token is required");
+            setAdding(false);
+            return;
+          }
+          if (!draft.channelId.trim()) {
+            setFeedback("channel id is required");
+            setAdding(false);
+            return;
+          }
+          body = {
+            kind: draft.modality,
+            token: draft.token.trim(),
+            channelId: draft.channelId.trim(),
+            workspace: draft.workspace?.trim() || undefined,
+            label: draft.label.trim() || undefined,
+            limit: draft.limit,
+          };
+        } else if (composer.modality === "text") {
+          if (!composer.text.trim()) {
+            setFeedback("paste some text first");
+            setAdding(false);
+            return;
+          }
+          body = { kind: "text", label: composer.label.trim() || "Pasted note", text: composer.text };
+        } else {
+          if (!pendingFile) {
+            setFeedback("pick a file first");
+            setAdding(false);
+            return;
+          }
+          const dataUrl = await readFileAsDataUrl(pendingFile.file);
+          body = {
+            kind: composer.modality,
+            label: composer.label.trim() || pendingFile.file.name,
+            fileName: pendingFile.file.name,
+            mimeType: pendingFile.file.type,
+            dataUrl,
+          };
+        }
+        const res = await fetch("/app/api/ingest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const json = (await res.json()) as { error?: string };
+        if (!res.ok) {
+          setFeedback(json.error ?? "ingest failed");
+          setAdding(false);
+          return;
+        }
+        setFeedback("added");
+        await refresh();
+        closeComposer();
+      } catch (err) {
+        setFeedback(err instanceof Error ? err.message : String(err));
+      } finally {
         setAdding(false);
-        return;
       }
-      setFeedback("added");
-      await refresh();
-      closeComposer();
-    } catch (err) {
-      setFeedback(err instanceof Error ? err.message : String(err));
-    } finally {
-      setAdding(false);
-    }
-  };
+    };
 
-  const removeSource = async (id: string) => {
-    const res = await fetch(`/app/api/sources/${id}`, { method: "DELETE" });
-    if (res.ok) await refresh();
-  };
+    const removeSource = async (id: string) => {
+      const res = await fetch(`/app/api/sources/${id}`, { method: "DELETE" });
+      if (res.ok) await refresh();
+    };
 
-  const refreshSource = async (id: string) => {
-    setRefreshingId(id);
-    try {
-      const res = await fetch(`/app/api/sources/${id}/refresh`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      const json = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) {
-        setFeedback(json.error ?? "refresh failed");
-        return;
+    const refreshSource = async (id: string) => {
+      setRefreshingId(id);
+      try {
+        const res = await fetch(`/app/api/sources/${id}/refresh`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        const json = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok) {
+          setFeedback(json.error ?? "refresh failed");
+          return;
+        }
+        await refresh();
+      } finally {
+        setRefreshingId(null);
       }
-      await refresh();
-    } finally {
-      setRefreshingId(null);
-    }
-  };
+    };
 
-  const triggerFilePicker = () => {
-    fileInputRef.current?.click();
-  };
+    const triggerFilePicker = () => {
+      fileInputRef.current?.click();
+    };
 
   const connectedCount = sources.filter((s) => s.status !== "error").length;
   const activeMood = MOOD_OPTIONS.find((m) => m.id === sourceConfig.mood);

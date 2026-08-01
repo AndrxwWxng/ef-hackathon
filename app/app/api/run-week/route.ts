@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { generateRepoHistory, RepoHistoryError } from "@/lib/repo-history/public";
+import { generateRepoHistory, projectToWeeklySource, RepoHistoryError } from "@/lib/repo-history/public";
 import { ingestSource, type IngestInput } from "@/lib/multimodal";
 import { addSource, summarizeForStorage } from "@/lib/multimodal/store";
 import { generateTextDraft, generateImage, imagePromptForSource } from "@/lib/openai";
@@ -211,35 +211,58 @@ export async function POST(req: Request): Promise<Response> {
         updateStage("ingest.store", { status: "done", detail: `${storedSources.length} source${storedSources.length === 1 ? "" : "s"}` });
         write({ type: "source", id: stored.id, label: stored.label });
 
-        const weeklySource: WeeklySource = {
-          week: `Repo pull · ${history.meta.windowFrom} -> ${history.meta.windowTo}`,
-          project: history.meta.repoName,
-          commits: [],
-          pullRequests: [],
-          voiceNotes: [],
-        };
+        const weeklySource: WeeklySource = projectToWeeklySource({
+          meta: history.meta,
+          shape: history.data.shape,
+          structure: history.data.structure,
+          narrative: history.data.narrative,
+        });
 
         for (const kind of targets) {
           updateStage(`generate.${kind}`, { status: "running" });
-          const text = await generateTextDraft({
-            kind,
-            source: weeklySource,
-            mood: body.mood,
-            writingSamples: body.writingSamples,
+        }
+
+        const draftResults = await Promise.all(
+          targets.map(async (kind) => {
+            try {
+              const text = await generateTextDraft({
+                kind,
+                source: weeklySource,
+                mood: body.mood,
+                writingSamples: body.writingSamples,
+              });
+              let imageDataUrl: string | undefined;
+              if (kind === "linkedin" || kind === "x") {
+                const prompt = imagePromptForSource(weeklySource, kind);
+                const img = await generateImage(prompt);
+                imageDataUrl = `data:image/png;base64,${img.base64}`;
+              }
+              return { kind, text, imageDataUrl };
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              updateStage(`generate.${kind}`, { status: "error", detail: message });
+              write({
+                type: "error",
+                message: `${kind} generation failed: ${message}`,
+                group: "generate",
+                recoverable: true,
+              });
+              throw err;
+            }
+          }),
+        );
+
+        for (const result of draftResults) {
+          updateStage(`generate.${result.kind}`, {
+            status: "done",
+            detail: approxMetric(result.kind, result.text),
           });
-          let imageDataUrl: string | undefined;
-          if (kind === "linkedin" || kind === "x") {
-            const prompt = imagePromptForSource(weeklySource, kind);
-            const img = await generateImage(prompt);
-            imageDataUrl = `data:image/png;base64,${img.base64}`;
-          }
-          updateStage(`generate.${kind}`, { status: "done", detail: approxMetric(kind, text) });
           write({
             type: "draft",
-            kind,
-            text,
-            metric: approxMetric(kind, text),
-            imageDataUrl,
+            kind: result.kind,
+            text: result.text,
+            metric: approxMetric(result.kind, result.text),
+            imageDataUrl: result.imageDataUrl,
           });
         }
 
@@ -248,8 +271,13 @@ export async function POST(req: Request): Promise<Response> {
         controller.close();
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        const stage = err instanceof RepoHistoryError ? `pull.${err.stage}` : "pull";
-        write({ type: "error", message, group: stage.startsWith("pull.") ? "pull" : "ingest", recoverable: false });
+        let group: Stage["group"] = "pull";
+        if (err instanceof RepoHistoryError) {
+          group = "pull";
+        } else if (message.includes(" generation failed")) {
+          group = "generate";
+        }
+        write({ type: "error", message, group, recoverable: false });
         try {
           controller.close();
         } catch {

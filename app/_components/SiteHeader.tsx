@@ -3,6 +3,21 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+function Logo({ paperColor }: { paperColor: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden>
+      <rect x="0.5" y="0.5" width="23" height="23" rx="6.5" fill="currentColor" />
+      <path
+        d="M5 19V6l7 8 7-8v13"
+        stroke={paperColor}
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function SiteHeader() {
   const pathname = usePathname();
   const isWorkspace = pathname.startsWith("/app");
@@ -18,33 +33,29 @@ export function SiteHeader() {
     >
       <nav
         aria-label="Primary navigation"
-        className="mx-auto flex h-11 w-full max-w-[1400px] items-center justify-between px-4 sm:px-6"
+        className="mx-auto flex h-11 w-full max-w-[1600px] items-center justify-between px-3 sm:px-5"
       >
         <Link
           href="/"
           aria-label="Multimail home"
           className="flex items-center gap-2 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-4"
         >
-          <span className="grid h-5 w-5 place-items-center rounded-md bg-[var(--app-ink)] text-[var(--app-paper)]">
-            <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
-              <path d="M3 5h10M3 10h6M3 8h10" />
-            </svg>
-          </span>
-          <span className="font-serif text-[0.95rem] font-medium tracking-[-0.02em]">
+          <Logo paperColor={isWorkspace ? "#fbfcfe" : "#fbf6ea"} />
+          <span className="font-serif text-[1rem] font-medium leading-none tracking-[-0.02em]">
             Multimail
           </span>
         </Link>
 
         <Link
-          href="/app"
+          href={isWorkspace ? "/" : "/app"}
           className={
             "rounded-full px-3 py-1 text-[12px] font-medium transition-opacity hover:opacity-80 " +
             (isWorkspace
-              ? "bg-[var(--app-ink)] text-[var(--app-paper)]"
+              ? "text-[var(--app-ink)] hover:bg-[var(--app-soft)]"
               : "bg-[var(--ink)] text-[var(--paper)]")
           }
         >
-          {isWorkspace ? "Workspace" : "Open app"}
+          {isWorkspace ? "← Home" : "Open app"}
         </Link>
       </nav>
     </header>
