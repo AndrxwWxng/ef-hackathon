@@ -26,14 +26,22 @@ type Source = {
   errorMessage?: string;
 };
 
+type ArtifactKind = "newsletter" | "linkedin" | "x";
+
 type Artifact = {
-  id: "newsletter" | "linkedin" | "x";
+  id: ArtifactKind;
   label: string;
   handle: string;
   blurb: string;
   body: string;
   metric: string;
   tone: string;
+  imageDataUrl?: string;
+};
+
+type GenerationState = {
+  status: "idle" | "loading" | "error";
+  error?: string;
 };
 
 type ContextSummary = {
@@ -59,7 +67,7 @@ const runSizes = [
   { id: "full", label: "Newsletter + LinkedIn + X", note: "All sources" },
 ];
 
-const artifacts: Artifact[] = [
+const initialArtifacts: Artifact[] = [
   {
     id: "newsletter",
     label: "Newsletter",
@@ -67,8 +75,8 @@ const artifacts: Artifact[] = [
     blurb:
       "A short, sourced note your partners can read in 90 seconds: what shipped, what is next, and one ask.",
     body:
-      "This week we shipped a faster ingest path (4×), closed two long-standing integration gaps, and softened the digest tone. Next up: a calmer mobile view, a sponsor-only changelog, and a quiet month-end recap.",
-    metric: "487 words",
+      "This week we shipped a faster ingest path (4x), closed two long-standing integration gaps, and softened the digest tone. Next up: a calmer mobile view, a sponsor-only changelog, and a quiet month-end recap.",
+    metric: "ready to generate",
     tone: "Calm, partner-facing",
   },
   {
@@ -78,8 +86,8 @@ const artifacts: Artifact[] = [
     blurb:
       "A single-paragraph post with the headline and the receipt. Reads as a status, not a broadcast.",
     body:
-      "Shipped: ingest 4× faster, two flaky integrations stable, and an inbox-worthy digest that doesn't read like a changelog. Sponsors get a picture. Engineers get a changelog. Nobody gets a deck.",
-    metric: "~1,400 chars",
+      "Click generate to draft this from the week's source data. Image is generated alongside the text.",
+    metric: "ready to generate",
     tone: "Direct, status-forward",
   },
   {
@@ -89,8 +97,8 @@ const artifacts: Artifact[] = [
     blurb:
       "A short, slightly opinionated note. The kind that earns a bookmark and a quiet reply.",
     body:
-      "week 32 · ingest 4× faster · two flaky integrations now boring on purpose · a digest your sponsors will actually open",
-    metric: "267 chars",
+      "Click generate to draft this from the week's source data. Image is generated alongside the text.",
+    metric: "ready to generate",
     tone: "Terse, engineer-coded",
   },
 ];
@@ -136,8 +144,21 @@ function summarizeKeyPhrases(source: Source): string {
   return source.keyPhrases.slice(0, 3).map((p) => p.phrase).join(" · ");
 }
 
+const ENDPOINT_BY_KIND: Record<ArtifactKind, string> = {
+  newsletter: "/api/generate/newsletter",
+  linkedin: "/api/generate/linkedin",
+  x: "/api/generate/x",
+};
+
+function approxMetric(kind: ArtifactKind, text: string): string {
+  if (kind === "x") return `${text.length} chars`;
+  if (kind === "linkedin") return `~${text.length.toLocaleString()} chars`;
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  return `${words} words`;
+}
+
 export default function AppHome() {
-  const [activeId, setActiveId] = useState<Artifact["id"]>("newsletter");
+  const [activeId, setActiveId] = useState<ArtifactKind>("newsletter");
   const [size, setSize] = useState<string>("full");
   const [running, setRunning] = useState(false);
   const [sources, setSources] = useState<Source[]>([]);
@@ -148,10 +169,12 @@ export default function AppHome() {
   const [feedback, setFeedback] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [pendingFile, setPendingFile] = useState<{ modality: Modality; file: File } | null>(null);
+  const [artifacts, setArtifacts] = useState<Artifact[]>(initialArtifacts);
+  const [state, setState] = useState<GenerationState>({ status: "idle" });
 
   const active = useMemo(
     () => artifacts.find((a) => a.id === activeId) ?? artifacts[0],
-    [activeId],
+    [activeId, artifacts],
   );
 
   const refresh = useCallback(async () => {
@@ -184,10 +207,63 @@ export default function AppHome() {
     refresh().catch(() => undefined);
   }, [refresh]);
 
-  const handleRun = () => {
+  async function generateOne(kind: ArtifactKind): Promise<void> {
+    setState({ status: "loading" });
+    try {
+      const textRes = await fetch(ENDPOINT_BY_KIND[kind], { method: "POST" });
+      if (!textRes.ok) {
+        const errBody = (await textRes.json().catch(() => ({}))) as { error?: string };
+        throw new Error(errBody.error ?? `text request failed (${textRes.status})`);
+      }
+      const textJson = (await textRes.json()) as { text: string };
+      let imageDataUrl: string | undefined;
+      if (kind === "linkedin" || kind === "x") {
+        const imgRes = await fetch("/api/generate/image", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind }),
+        });
+        if (imgRes.ok) {
+          const imgJson = (await imgRes.json()) as { mimeType: string; data: string };
+          imageDataUrl = `data:${imgJson.mimeType};base64,${imgJson.data}`;
+        }
+      }
+      setArtifacts((prev) =>
+        prev.map((a) =>
+          a.id === kind
+            ? {
+                ...a,
+                body: textJson.text,
+                metric: approxMetric(kind, textJson.text),
+                imageDataUrl,
+              }
+            : a,
+        ),
+      );
+      setState({ status: "idle" });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setState({ status: "error", error: message });
+    }
+  }
+
+  async function handleRun() {
     setRunning(true);
-    window.setTimeout(() => setRunning(false), 1400);
-  };
+    const targets: ArtifactKind[] =
+      size === "small" ? ["newsletter"] : size === "medium" ? ["newsletter", "linkedin"] : ["newsletter", "linkedin", "x"];
+    for (const t of targets) {
+      await generateOne(t);
+    }
+    setRunning(false);
+  }
+
+  async function handleRegenerate() {
+    setRunning(true);
+    await generateOne(activeId);
+    setRunning(false);
+  }
+
+  const isGenerating = running || state.status === "loading";
 
   const openComposer = (modality: Modality) => {
     setComposer({ modality, label: "", text: "" });
@@ -295,15 +371,15 @@ export default function AppHome() {
               <span className="absolute inset-0 animate-ping rounded-full bg-[var(--app-accent)] opacity-60" />
               <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-accent)]" />
             </span>
-            Ready to run
+            {isGenerating ? "Generating…" : state.status === "error" ? "Error" : "Ready to run"}
           </div>
           <button
             type="button"
             onClick={handleRun}
-            disabled={running}
+            disabled={isGenerating}
             className="group inline-flex h-10 items-center justify-center gap-2 rounded-full bg-[var(--app-ink)] px-5 text-sm font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px disabled:opacity-50"
           >
-            {running ? "Running…" : "Run the week"}
+            {isGenerating ? "Running…" : "Run the week"}
             <svg
               viewBox="0 0 16 16"
               className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5"
@@ -319,6 +395,16 @@ export default function AppHome() {
           </button>
         </div>
       </header>
+
+      {state.status === "error" && (
+        <div
+          role="alert"
+          className="rounded-2xl border border-[var(--app-accent)]/40 bg-[var(--app-accent)]/5 px-4 py-3 text-[12px] text-[var(--app-ink)]"
+        >
+          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-accent)]">Generation error</span>
+          <p className="mt-1">{state.error}</p>
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
         <aside className="flex flex-col gap-4">
@@ -580,12 +666,19 @@ export default function AppHome() {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  className="inline-flex h-7 items-center justify-center rounded-full border border-[var(--app-line)] px-3 text-[11.5px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)]"
+                  onClick={handleRegenerate}
+                  disabled={isGenerating}
+                  className="inline-flex h-7 items-center justify-center rounded-full border border-[var(--app-line)] px-3 text-[11.5px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)] disabled:opacity-50"
                 >
-                  Edit
+                  Regenerate
                 </button>
                 <button
                   type="button"
+                  onClick={() => {
+                    if (typeof navigator !== "undefined" && navigator.clipboard) {
+                      void navigator.clipboard.writeText(active.body);
+                    }
+                  }}
                   className="inline-flex h-7 items-center justify-center gap-1.5 rounded-full bg-[var(--app-ink)] px-3 text-[11.5px] font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px"
                 >
                   Copy
@@ -596,8 +689,18 @@ export default function AppHome() {
                 </button>
               </div>
             </div>
-            <div className="grid gap-3 px-5 py-5 sm:px-6 sm:py-6">
-              <p className="font-serif text-[1.05rem] leading-[1.45] text-[var(--app-ink)] sm:text-[1.15rem]">
+            <div className="grid gap-4 px-5 py-5 sm:px-6 sm:py-6">
+              {active.imageDataUrl && (
+                <div className="overflow-hidden rounded-xl border border-[var(--app-line)]">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={active.imageDataUrl}
+                    alt={`${active.label} generated image`}
+                    className="block w-full"
+                  />
+                </div>
+              )}
+              <p className="whitespace-pre-wrap font-serif text-[1.05rem] leading-[1.45] text-[var(--app-ink)] sm:text-[1.15rem]">
                 {active.body}
               </p>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-[var(--app-line)] pt-3 font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
