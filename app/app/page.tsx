@@ -274,6 +274,7 @@ export default function AppHome() {
   const [pendingFile, setPendingFile] = useState<{ modality: "audio" | "video"; file: File } | null>(null);
   const [artifacts, setArtifacts] = useState<Artifact[]>(initialArtifacts);
   const [state, setState] = useState<GenerationState>({ status: "idle" });
+  const [configOpen, setConfigOpen] = useState(true);
   const [sourceConfig, setSourceConfig] = useState<SourceConfig>({
     github: "multimail/api",
     writingSamples: [
@@ -559,29 +560,25 @@ export default function AppHome() {
   const connectedCount = sources.filter((s) => s.status !== "error").length;
 
   return (
-    <main className="mx-auto flex min-h-[calc(100vh-72px)] w-full max-w-[1240px] flex-col justify-center gap-5 px-6 py-6">
-      <header className="flex flex-col gap-4 border-b border-[var(--app-line)] pb-4 sm:flex-row sm:items-end sm:justify-between">
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-            <Link href="/" className="transition-colors hover:text-[var(--app-ink)]">
-              ← Landing
-            </Link>
-            <span className="text-[var(--app-line)]">/</span>
+    <main className="mx-auto flex min-h-[calc(100vh-72px)] w-full max-w-[1480px] flex-col justify-center gap-5 px-4 py-5 sm:px-5 lg:px-6">
+      <header className="flex flex-col gap-3 border-b border-[var(--app-line)] pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
             <span>Workspace</span>
-            <span className="text-[var(--app-line)]">/</span>
+            <span className="text-[var(--app-line)]">·</span>
             <span className="text-[var(--app-ink)]">Week 32</span>
           </div>
-          <h1 className="font-serif text-[1.65rem] font-medium leading-[1.02] tracking-[-0.02em] sm:text-[1.85rem]">
+          <h1 className="font-serif text-[1.55rem] font-medium leading-[1.05] tracking-[-0.02em] sm:text-[1.7rem]">
             Wrap the week into three drafts.
           </h1>
-          <p className="max-w-xl text-[12.5px] leading-relaxed text-[var(--app-muted)]">
+          <p className="max-w-xl text-[12px] leading-relaxed text-[var(--app-muted)]">
             {context
               ? `${context.sourceCount} source${context.sourceCount === 1 ? "" : "s"} · ${context.words} words · ${context.minutes.toFixed(1)} min ingested · drafts generated locally · nothing sent without a click.`
               : "Aug 4 – Aug 10 · drafts generated locally · nothing sent without a click."}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="flex items-center gap-2 rounded-full border border-[var(--app-line)] bg-[var(--app-panel)] px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 rounded-full border border-[var(--app-line)] bg-[var(--app-panel)] px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
             <span aria-hidden className="relative grid h-1.5 w-1.5 place-items-center">
               <span className="absolute inset-0 animate-ping rounded-full bg-[var(--app-accent)] opacity-60" />
               <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-accent)]" />
@@ -592,7 +589,7 @@ export default function AppHome() {
             type="button"
             onClick={handleRun}
             disabled={isGenerating || targets.size === 0}
-            className="group inline-flex h-10 items-center justify-center gap-2 rounded-full bg-[var(--app-ink)] px-5 text-sm font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-50"
+            className="group inline-flex h-9 items-center justify-center gap-2 rounded-full bg-[var(--app-ink)] px-4 text-[13px] font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isGenerating ? "Running…" : "Run the week"}
             <svg
@@ -621,14 +618,14 @@ export default function AppHome() {
         </div>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
-        <aside className="flex flex-col gap-4">
+      <div className="grid gap-5 lg:grid-cols-[280px_1fr] xl:grid-cols-[300px_1fr]">
+        <aside className="sticky top-14 flex max-h-[calc(100vh-3.5rem)] flex-col gap-3 overflow-y-auto pr-1">
           <section className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
             <div className="flex items-center justify-between">
-              <h2 className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+              <h2 className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
                 Sources
               </h2>
-              <span className="font-mono text-[11px] text-[var(--app-muted)]">
+              <span className="font-mono text-[10.5px] text-[var(--app-muted)]">
                 {connectedCount} / {sources.length || 0}
               </span>
             </div>
@@ -730,183 +727,175 @@ export default function AppHome() {
             </div>
           </section>
 
-          <section className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                Configurable sources
+          <details className="group rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4 [&[open]]:pb-3" open={configOpen} onToggle={(event) => setConfigOpen((event.target as HTMLDetailsElement).open)}>
+            <summary className="flex cursor-pointer list-none items-center justify-between outline-none">
+              <h2 className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                Configuration
               </h2>
-              <span className="font-mono text-[11px] text-[var(--app-muted)]">
+              <span className="flex items-center gap-2 font-mono text-[10.5px] text-[var(--app-muted)]">
                 {(writtenSamples.length + (sourceConfig.github.trim() ? 1 : 0))} active
+                <svg viewBox="0 0 16 16" className="h-3 w-3 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M4 6l4 4 4-4" />
+                </svg>
               </span>
-            </div>
+            </summary>
 
-            <div className="flex flex-col gap-2 rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)]/40 p-3">
-              <div className="flex items-center justify-between">
+            <div className="mt-3 flex flex-col gap-3">
+              <div className="flex flex-col gap-2">
                 <div className="flex items-center gap-2">
                   <span aria-hidden className="grid h-5 w-5 place-items-center rounded-md bg-[#0f172a] text-white">
                     <svg viewBox="0 0 16 16" className="h-3 w-3" fill="currentColor" aria-hidden>
                       <path d="M8 .2a8 8 0 0 0-2.5 15.6c.4.1.5-.2.5-.4v-1.4c-2.2.5-2.7-1-2.7-1-.4-.9-.9-1.2-.9-1.2-.7-.5.1-.5.1-.5.8.1 1.2.8 1.2.8.7 1.2 1.9.9 2.4.7.1-.5.3-.9.5-1.1-1.8-.2-3.6-.9-3.6-3.9 0-.9.3-1.6.8-2.1-.1-.2-.4-1 .1-2.1 0 0 .7-.2 2.2.8a7.7 7.7 0 0 1 4 0c1.5-1 2.2-.8 2.2-.8.5 1.1.2 1.9.1 2.1.5.5.8 1.2.8 2.1 0 3-1.8 3.7-3.6 3.9.3.3.6.8.6 1.6v2.4c0 .2.1.5.5.4A8 8 0 0 0 8 .2z" />
                     </svg>
                   </span>
-                  <span className="text-[12.5px] font-medium">GitHub</span>
+                  <span className="text-[12.5px] font-medium">GitHub repo</span>
                 </div>
-                <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-accent)]">
-                  connected
-                </span>
+                <label className="flex flex-col gap-1">
+                  <span className="sr-only">GitHub repository</span>
+                  <input
+                    type="text"
+                    value={sourceConfig.github}
+                    onChange={(event) =>
+                      setSourceConfig((prev) => ({ ...prev, github: event.target.value }))
+                    }
+                    placeholder="owner/repo"
+                    className="h-8 w-full rounded-md border border-[var(--app-line)] bg-[var(--app-paper)] px-3 font-mono text-[12px] outline-none transition-colors focus:border-[var(--app-ink)]"
+                  />
+                </label>
               </div>
-              <label className="flex flex-col gap-1">
-                <span className="sr-only">GitHub repository</span>
-                <input
-                  type="text"
-                  value={sourceConfig.github}
-                  onChange={(event) =>
-                    setSourceConfig((prev) => ({ ...prev, github: event.target.value }))
-                  }
-                  placeholder="owner/repo or https://github.com/owner/repo"
-                  className="h-9 w-full rounded-md border border-[var(--app-line)] bg-[var(--app-paper)] px-3 font-mono text-[12px] outline-none transition-colors focus:border-[var(--app-ink)]"
-                />
-              </label>
-              <p className="text-[10.5px] leading-snug text-[var(--app-muted)]">
-                Paste a repo URL or <span className="font-mono">owner/repo</span>. We pull merged PRs + commits for the selected week.
-              </p>
-            </div>
 
-            <div className="flex flex-col gap-2 rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)]/40 p-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span aria-hidden className="grid h-5 w-5 place-items-center rounded-md bg-[var(--app-ink)] text-[var(--app-paper)] font-serif text-[10px]">
-                    Aa
-                  </span>
-                  <span className="text-[12.5px] font-medium">Writing samples</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={addSample}
-                  className="rounded-full border border-[var(--app-line)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-ink)]"
-                >
-                  + add
-                </button>
-              </div>
               <div className="flex flex-col gap-2">
-                {sourceConfig.writingSamples.map((sample, idx) => (
-                  <div key={`sample-${idx}`} className="flex flex-col gap-1.5">
-                    <label className="flex flex-col gap-1">
-                      <span className="sr-only">Writing sample {idx + 1}</span>
-                      <textarea
-                        rows={2}
-                        value={sample}
-                        onChange={(event) => updateSample(idx, event.target.value)}
-                        placeholder={`Paste an example ${idx === 0 ? "newsletter intro" : "post"} from your team…`}
-                        className="w-full resize-none rounded-md border border-[var(--app-line)] bg-[var(--app-paper)] px-3 py-2 text-[12px] leading-snug outline-none transition-colors focus:border-[var(--app-ink)]"
-                      />
-                    </label>
-                    {sourceConfig.writingSamples.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => removeSample(idx)}
-                        className="self-end font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-accent)]"
-                      >
-                        remove
-                      </button>
-                    )}
-                  </div>
-                ))}
+                <div className="flex items-center justify-between">
+                  <span className="text-[12.5px] font-medium">Writing samples</span>
+                  <button
+                    type="button"
+                    onClick={addSample}
+                    className="rounded-full border border-[var(--app-line)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-ink)]"
+                  >
+                    + add
+                  </button>
+                </div>
+                <div className="flex flex-col gap-2">
+                  {sourceConfig.writingSamples.map((sample, idx) => (
+                    <div key={`sample-${idx}`} className="flex flex-col gap-1">
+                      <label className="flex flex-col gap-1">
+                        <span className="sr-only">Writing sample {idx + 1}</span>
+                        <textarea
+                          rows={2}
+                          value={sample}
+                          onChange={(event) => updateSample(idx, event.target.value)}
+                          placeholder={`Paste an example ${idx === 0 ? "newsletter intro" : "post"}…`}
+                          className="w-full resize-none rounded-md border border-[var(--app-line)] bg-[var(--app-paper)] px-3 py-2 text-[12px] leading-snug outline-none transition-colors focus:border-[var(--app-ink)]"
+                        />
+                      </label>
+                      {sourceConfig.writingSamples.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeSample(idx)}
+                          className="self-end font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-accent)]"
+                        >
+                          remove
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
-              <p className="text-[10.5px] leading-snug text-[var(--app-muted)]">
-                Used to calibrate voice. The drafts read from your team&apos;s words, they do not lift sentences.
-              </p>
-            </div>
 
-            <div className="flex flex-col gap-2 rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)]/40 p-3">
-              <div className="flex items-center justify-between">
-                <h3 className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-                  Mood / tone
-                </h3>
-                <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
-                  {sourceConfig.mood === "default" ? "default" : "applied"}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-1.5">
-                {MOOD_OPTIONS.map((m) => {
-                  const selected = sourceConfig.mood === m.id;
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() =>
-                        setSourceConfig((prev) => ({ ...prev, mood: m.id }))
-                      }
-                      aria-pressed={selected}
-                      className={
-                        "flex flex-col items-start gap-0.5 rounded-md border px-2 py-1.5 text-left transition-all " +
-                        (selected
-                          ? "border-[var(--app-ink)] bg-[var(--app-soft)] shadow-[0_8px_24px_-16px_rgba(15,23,42,0.35)]"
-                          : "border-[var(--app-line)] bg-[var(--app-paper)] hover:border-[var(--app-muted)]")
-                      }
-                    >
-                      <span className="text-[11.5px] font-medium text-[var(--app-ink)]">
-                        {m.label}
-                      </span>
-                      <span className="text-[10px] leading-snug text-[var(--app-muted)]">
-                        {m.hint}
-                      </span>
-                    </button>
-                  );
-                })}
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[12.5px] font-medium">Mood</span>
+                  <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
+                    {sourceConfig.mood === "default" ? "default" : "applied"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {MOOD_OPTIONS.map((m) => {
+                    const selected = sourceConfig.mood === m.id;
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() =>
+                          setSourceConfig((prev) => ({ ...prev, mood: m.id }))
+                        }
+                        aria-pressed={selected}
+                        className={
+                          "flex flex-col items-start gap-0.5 rounded-md border px-2 py-1.5 text-left transition-all " +
+                          (selected
+                            ? "border-[var(--app-ink)] bg-[var(--app-soft)]"
+                            : "border-[var(--app-line)] bg-[var(--app-paper)] hover:border-[var(--app-muted)]")
+                        }
+                      >
+                        <span className="text-[11.5px] font-medium text-[var(--app-ink)]">
+                          {m.label}
+                        </span>
+                        <span className="text-[10px] leading-snug text-[var(--app-muted)]">
+                          {m.hint}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
-          </section>
+          </details>
 
           {context && context.sourceCount > 0 && (
-            <section className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
-              <div className="flex items-center justify-between">
-                <h2 className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+            <details className="group rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4 [&[open]]:pb-3" open>
+              <summary className="flex cursor-pointer list-none items-center justify-between outline-none">
+                <h2 className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
                   Ingested context
                 </h2>
-                <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
-                  {context.tone}
+                <span className="flex items-center gap-2 font-mono text-[10.5px] text-[var(--app-muted)]">
+                  {context.sourceCount} source{context.sourceCount === 1 ? "" : "s"}
+                  <svg viewBox="0 0 16 16" className="h-3 w-3 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M4 6l4 4 4-4" />
+                  </svg>
                 </span>
+              </summary>
+              <div className="mt-3 flex flex-col gap-3">
+                {context.themes.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {context.themes.map((theme) => (
+                      <span
+                        key={theme}
+                        className="rounded-full bg-[var(--app-soft)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--app-ink)]"
+                      >
+                        {theme}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {context.bullets.length > 0 && (
+                  <ul className="flex flex-col gap-1 text-[11.5px] leading-snug text-[var(--app-ink)]">
+                    {context.bullets.slice(0, 4).map((bullet, i) => (
+                      <li key={i} className="flex gap-2">
+                        <span aria-hidden className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-[var(--app-accent)]" />
+                        <span>{bullet}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <details className="text-[11px] text-[var(--app-muted)]">
+                  <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.16em]">
+                    Raw context for the agent
+                  </summary>
+                  <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--app-line)] bg-[var(--app-soft)] p-3 text-[11px] leading-relaxed text-[var(--app-ink)]">
+                    {context.body}
+                  </pre>
+                </details>
               </div>
-              {context.themes.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {context.themes.map((theme) => (
-                    <span
-                      key={theme}
-                      className="rounded-full bg-[var(--app-soft)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--app-ink)]"
-                    >
-                      {theme}
-                    </span>
-                  ))}
-                </div>
-              )}
-              {context.bullets.length > 0 && (
-                <ul className="flex flex-col gap-1 text-[11.5px] leading-snug text-[var(--app-ink)]">
-                  {context.bullets.slice(0, 4).map((bullet, i) => (
-                    <li key={i} className="flex gap-2">
-                      <span aria-hidden className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-[var(--app-accent)]" />
-                      <span>{bullet}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <details className="text-[11px] text-[var(--app-muted)]">
-                <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.16em]">
-                  Raw context for the agent
-                </summary>
-                <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--app-line)] bg-[var(--app-soft)] p-3 text-[11px] leading-relaxed text-[var(--app-ink)]">
-                  {context.body}
-                </pre>
-              </details>
-            </section>
+            </details>
           )}
 
-          <section className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
+          <section className="flex flex-col gap-2 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
             <div className="flex items-center justify-between">
-              <h2 className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+              <h2 className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
                 Run size
               </h2>
-              <span className="font-mono text-[11px] text-[var(--app-muted)]">
-                {targets.size}/3 selected
+              <span className="font-mono text-[10.5px] text-[var(--app-muted)]">
+                {targets.size}/3
               </span>
             </div>
             <div className="flex flex-col">
@@ -920,22 +909,22 @@ export default function AppHome() {
                     aria-checked={selected}
                     onClick={() => toggleTarget(option.id as ArtifactKind)}
                     className={
-                      "group flex items-center justify-between gap-3 py-2.5 text-left transition-colors " +
+                      "group flex items-center justify-between gap-3 py-2 text-left transition-colors " +
                       (i !== 0 ? "border-t border-[var(--app-line)]" : "")
                     }
                   >
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2.5">
                       <span
                         aria-hidden
                         className={
-                          "grid h-4 w-4 place-items-center rounded border transition-colors " +
+                          "grid h-3.5 w-3.5 place-items-center rounded border transition-colors " +
                           (selected
                             ? "border-[var(--app-ink)] bg-[var(--app-ink)] text-[var(--app-paper)]"
                             : "border-[var(--app-line)] group-hover:border-[var(--app-muted)]")
                         }
                       >
                         {selected && (
-                          <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                          <svg viewBox="0 0 16 16" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                             <path d="M3 8l3 3 7-7" />
                           </svg>
                         )}
@@ -981,7 +970,7 @@ export default function AppHome() {
           <div
             role="tablist"
             aria-label="Artifacts"
-            className="grid gap-2.5 sm:grid-cols-3"
+            className="grid gap-2 sm:grid-cols-3"
           >
             {artifacts.map((artifact) => {
               const selected = artifact.id === activeId;
@@ -993,38 +982,31 @@ export default function AppHome() {
                   aria-selected={selected}
                   onClick={() => setActiveId(artifact.id)}
                   className={
-                    "group relative flex flex-col items-start gap-1.5 overflow-hidden rounded-2xl border p-3 text-left transition-all " +
+                    "group relative flex flex-col items-start gap-1 overflow-hidden rounded-2xl border p-3.5 text-left transition-all " +
                     (selected
                       ? "border-[var(--app-ink)] bg-[var(--app-panel)] shadow-[0_18px_40px_-28px_rgba(15,23,42,0.45)]"
                       : "border-[var(--app-line)] bg-[var(--app-panel)]/60 hover:border-[var(--app-muted)]")
                   }
                 >
-                  <div className="flex w-full items-center justify-between">
+                  <div className="flex w-full items-center justify-between gap-2">
                     <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
                       {artifact.handle}
                     </span>
                     <span
                       className={
-                        "font-mono text-[10px] " +
+                        "shrink-0 font-mono text-[10px] " +
                         (selected ? "text-[var(--app-ink)]" : "text-[var(--app-muted)]")
                       }
                     >
                       {artifact.metric}
                     </span>
                   </div>
-                  <div className="font-serif text-[1.15rem] font-medium leading-[1.05] tracking-[-0.01em] text-[var(--app-ink)]">
+                  <div className="font-serif text-[1.25rem] font-medium leading-[1.05] tracking-[-0.01em] text-[var(--app-ink)]">
                     {artifact.label}
                   </div>
-                  <p className="text-[11.5px] leading-snug text-[var(--app-muted)] line-clamp-2">
+                  <p className="line-clamp-2 text-[11.5px] leading-snug text-[var(--app-muted)]">
                     {artifact.blurb}
                   </p>
-                  <div
-                    aria-hidden
-                    className={
-                      "mt-1 h-px w-full transition-colors " +
-                      (selected ? "bg-[var(--app-accent)]" : "bg-[var(--app-line)]")
-                    }
-                  />
                 </button>
               );
             })}
@@ -1033,14 +1015,6 @@ export default function AppHome() {
           <article className="flex flex-col overflow-hidden rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)]">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--app-line)] px-4 py-2.5">
               <div className="flex items-center gap-3">
-                <span
-                  aria-hidden
-                  className="grid h-6 w-6 place-items-center rounded-md bg-[var(--app-ink)] text-[var(--app-paper)]"
-                >
-                  <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M2 4h12M2 8h8M2 12h12" />
-                  </svg>
-                </span>
                 <div className="flex flex-col">
                   <span className="text-[12.5px] font-medium text-[var(--app-ink)]">
                     {active.label} draft
@@ -1055,7 +1029,7 @@ export default function AppHome() {
                   type="button"
                   onClick={handleRegenerate}
                   disabled={isGenerating || !targets.has(active.id)}
-                  className="inline-flex h-7 items-center justify-center rounded-full border border-[var(--app-line)] px-3 text-[11.5px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-8 items-center justify-center rounded-full border border-[var(--app-line)] px-3 text-[12px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Regenerate
                 </button>
@@ -1066,7 +1040,7 @@ export default function AppHome() {
                       void navigator.clipboard.writeText(active.body);
                     }
                   }}
-                  className="inline-flex h-7 items-center justify-center gap-1.5 rounded-full bg-[var(--app-ink)] px-3 text-[11.5px] font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px"
+                  className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full bg-[var(--app-ink)] px-3 text-[12px] font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px"
                 >
                   Copy markdown
                   <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -1076,7 +1050,7 @@ export default function AppHome() {
                 </button>
               </div>
             </div>
-            <div className="bg-[var(--app-bg)] px-3 py-6 sm:px-6 sm:py-10">
+            <div className="bg-[var(--app-bg)] px-4 py-8 sm:px-8 sm:py-10">
               <ChannelPreview
                 artifact={active}
                 githubDisplay={githubDisplay}
@@ -1084,44 +1058,22 @@ export default function AppHome() {
                 authorTitle={titleForKind(active.id)}
               />
             </div>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-[var(--app-line)] px-4 py-2.5 font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
-              <span>Source · {githubDisplay}</span>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[var(--app-line)] px-4 py-2 font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
+              <span>{githubDisplay}</span>
               <span className="text-[var(--app-line)]">·</span>
-              <span>Mood · {sourceConfig.mood === "default" ? "default" : sourceConfig.mood}</span>
+              <span>{sourceConfig.mood === "default" ? "default tone" : sourceConfig.mood}</span>
               <span className="text-[var(--app-line)]">·</span>
-              <span>Voice · {writtenSamples.length} sample{writtenSamples.length === 1 ? "" : "s"}</span>
+              <span>{writtenSamples.length} sample{writtenSamples.length === 1 ? "" : "s"}</span>
               <span className="text-[var(--app-line)]">·</span>
-              <span>Length · {active.metric}</span>
+              <span>{active.metric}</span>
               {context && context.sourceCount > 0 && (
                 <>
                   <span className="text-[var(--app-line)]">·</span>
-                  <span>Context · {context.sourceCount} source{context.sourceCount === 1 ? "" : "s"}</span>
+                  <span>{context.sourceCount} source{context.sourceCount === 1 ? "" : "s"}</span>
                 </>
               )}
             </div>
           </article>
-
-          <div className="flex flex-col gap-2 rounded-2xl border border-dashed border-[var(--app-line)] bg-[var(--app-panel)]/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-3">
-              <span
-                aria-hidden
-                className="grid h-6 w-6 place-items-center rounded-full border border-[var(--app-line)] text-[var(--app-muted)]"
-              >
-                <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M8 3v10M3 8h10" />
-                </svg>
-              </span>
-              <p className="text-[11.5px] leading-snug text-[var(--app-muted)]">
-                Drop a new voice note, paste a doc, connect a Discord or Slack channel, or regenerate any single draft without rerunning the week.
-              </p>
-            </div>
-            <Link
-              href="/"
-              className="inline-flex h-7 items-center justify-center rounded-full px-3 text-[11.5px] font-medium text-[var(--app-ink)] underline-offset-4 hover:underline"
-            >
-              Back to overview
-            </Link>
-          </div>
         </section>
       </div>
 

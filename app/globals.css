@@ -56,6 +56,17 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+html,
+body {
+  overscroll-behavior: none;
+  scrollbar-width: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none;
+}
+
 ::selection {
   background: var(--accent);
   color: var(--paper);

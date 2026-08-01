@@ -94,7 +94,7 @@ function SourceChip({ label, count, accent }: { label: string; count: string; ac
 
 export default function Landing() {
   return (
-    <main className="mx-auto w-full max-w-6xl px-6">
+    <main className="mx-auto w-full max-w-[1480px] px-4 sm:px-6 lg:px-8">
       <section className="grid gap-10 pb-20 pt-16 sm:pt-24 lg:grid-cols-12 lg:gap-12 lg:pb-28 lg:pt-32">
         <div className="flex flex-col gap-7 lg:col-span-7 lg:gap-8">
           <h1 className="font-serif text-[2.6rem] font-medium leading-[0.98] tracking-[-0.02em] text-[var(--ink)] sm:text-[3.4rem] lg:text-[4.1rem]">
@@ -172,11 +172,14 @@ export default function Landing() {
         </div>
       </section>
 
-      <section className="grid gap-10 py-24 lg:grid-cols-12 lg:gap-16">
+      <section id="how" className="grid gap-10 border-t border-[var(--border)] py-20 lg:grid-cols-12 lg:gap-16">
         <div className="lg:col-span-5">
           <div className="font-serif text-[1.6rem] font-medium leading-[1.05] tracking-[-0.01em] sm:text-[2rem]">
             One week of <span className="text-[var(--accent-deep)]">messy</span> source data becomes three drafts that read like your team wrote them.
           </div>
+          <p className="mt-5 max-w-md text-[15px] leading-relaxed text-[var(--muted-foreground)]">
+            The drafts don&apos;t start from a prompt. They start from the week you already shipped — read, grouped, and matched to the channel.
+          </p>
         </div>
         <div className="lg:col-span-7">
           <ol className="flex flex-col divide-y divide-[var(--border)] border-y border-[var(--border)]">
@@ -277,48 +280,6 @@ export default function Landing() {
               </div>
             ))}
           </div>
-        </div>
-      </section>
-
-      <section
-        id="how"
-        className="grid gap-10 border-t border-[var(--border)] py-20 lg:grid-cols-12"
-      >
-        <div className="lg:col-span-5">
-          <div className="font-serif text-[1.6rem] font-medium leading-[1.05] tracking-[-0.01em] sm:text-[1.9rem]">
-            How it works.
-          </div>
-        </div>
-        <div className="lg:col-span-7">
-          <ol className="flex flex-col divide-y divide-[var(--border)] border-y border-[var(--border)]">
-            {[
-              {
-                n: "01",
-                title: "Pull the week.",
-                body: "Commits, merged PRs, the voice notes you dropped in Slack, the doc you pasted in. Multimail treats your repos as the source of truth and the rest as seasoning.",
-              },
-              {
-                n: "02",
-                title: "Group it the way you'd write it.",
-                body: "Weekly themes surface on their own, not a flat dump of every commit. The model picks the things worth saying out loud and skips the noise.",
-              },
-              {
-                n: "03",
-                title: "Hand you three drafts.",
-                body: "A newsletter for sponsors who want the picture. A LinkedIn post for partners in the feed. An X post for the engineers in your replies. Same week, matched depths.",
-              },
-            ].map((step) => (
-              <li key={step.n} className="grid grid-cols-[3.5rem_1fr] gap-4 py-7">
-                <div className="font-mono text-[13px] text-[var(--muted-foreground)]">{step.n}</div>
-                <div className="flex flex-col gap-2">
-                  <div className="font-serif text-[1.2rem] font-medium leading-snug">{step.title}</div>
-                  <p className="max-w-prose text-[0.97rem] leading-relaxed text-[var(--muted-foreground)]">
-                    {step.body}
-                  </p>
-                </div>
-              </li>
-            ))}
-          </ol>
         </div>
       </section>
 
