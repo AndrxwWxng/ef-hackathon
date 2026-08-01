@@ -19,6 +19,7 @@
 
 # production
 /build
+/.repo-shot
 
 # misc
 .DS_Store

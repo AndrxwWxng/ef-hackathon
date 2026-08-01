@@ -96,7 +96,8 @@ export type RepoShotOptions = {
   captureConcurrency?: number;
   frameConcurrency?: number;
   browser?: Browser;
-  keepRaw?: boolean;
+  skipCloneFrom?: string;
+  repoName?: string;
   onLog?: (line: string) => void;
   onStep?: (step: RepoShotStep) => void;
 };
