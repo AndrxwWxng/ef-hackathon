@@ -1,18 +1,43 @@
 import { NextResponse } from "next/server";
 
 import { ingestSource, type IngestInput } from "@/lib/multimodal";
-import { addSource, summarizeForStorage } from "@/lib/multimodal/store";
+import {
+  addSource,
+  newSourceId,
+  saveCredential,
+  summarizeForStorage,
+} from "@/lib/multimodal/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_TEXT_BYTES = 512 * 1024;
 const MAX_MEDIA_BYTES = 96 * 1024 * 1024;
+const MAX_CONNECTOR_MESSAGES = 200;
 
 type IngestBody =
-  | { kind: "text"; label?: string; text: string; origin?: string }
-  | { kind: "audio"; label?: string; dataUrl?: string; fileName?: string; origin?: string }
-  | { kind: "video"; label?: string; dataUrl?: string; fileName?: string; origin?: string };
+  | { kind: "text"; label?: string; text: string; origin?: string; sourceId?: string }
+  | { kind: "audio"; label?: string; dataUrl?: string; fileName?: string; origin?: string; sourceId?: string }
+  | { kind: "video"; label?: string; dataUrl?: string; fileName?: string; origin?: string; sourceId?: string }
+  | {
+      kind: "discord";
+      label?: string;
+      token: string;
+      channelId: string;
+      limit?: number;
+      origin?: string;
+      sourceId?: string;
+    }
+  | {
+      kind: "slack";
+      label?: string;
+      token: string;
+      channelId: string;
+      workspace?: string;
+      limit?: number;
+      origin?: string;
+      sourceId?: string;
+    };
 
 function decodeDataUrl(dataUrl: string): { buffer: Buffer; mimeType: string; fileName?: string } {
   const match = /^data:([^;,]+);base64,(.+)$/i.exec(dataUrl);
@@ -41,6 +66,8 @@ export async function POST(req: Request) {
   }
 
   let input: IngestInput;
+  let credential: { kind: "discord" | "slack"; token: string; workspace?: string } | null = null;
+
   try {
     if (body.kind === "text") {
       if (typeof body.text !== "string" || !body.text.trim()) {
@@ -81,6 +108,39 @@ export async function POST(req: Request) {
         fileName: body.fileName,
         origin: body.origin,
       };
+    } else if (body.kind === "discord") {
+      if (!body.token?.trim()) {
+        return NextResponse.json({ error: "discord ingest needs `token`" }, { status: 400 });
+      }
+      if (!body.channelId?.trim()) {
+        return NextResponse.json({ error: "discord ingest needs `channelId`" }, { status: 400 });
+      }
+      input = {
+        modality: "discord",
+        label: body.label?.trim() || "Discord channel",
+        token: body.token.trim(),
+        channelId: body.channelId.trim(),
+        limit: clampLimit(body.limit),
+        origin: body.origin,
+      };
+      credential = { kind: "discord", token: body.token.trim() };
+    } else if (body.kind === "slack") {
+      if (!body.token?.trim()) {
+        return NextResponse.json({ error: "slack ingest needs `token`" }, { status: 400 });
+      }
+      if (!body.channelId?.trim()) {
+        return NextResponse.json({ error: "slack ingest needs `channelId`" }, { status: 400 });
+      }
+      input = {
+        modality: "slack",
+        label: body.label?.trim() || "Slack channel",
+        token: body.token.trim(),
+        channelId: body.channelId.trim(),
+        workspace: body.workspace?.trim(),
+        limit: clampLimit(body.limit),
+        origin: body.origin,
+      };
+      credential = { kind: "slack", token: body.token.trim(), workspace: body.workspace?.trim() };
     } else {
       return NextResponse.json({ error: `unknown kind: ${(body as { kind?: string }).kind}` }, { status: 400 });
     }
@@ -93,6 +153,21 @@ export async function POST(req: Request) {
       onLog: () => undefined,
       onStep: () => undefined,
     });
+    if (body.kind === "discord" || body.kind === "slack") {
+      const sourceId = body.sourceId?.trim() || result.id;
+      if (sourceId !== result.id) {
+        result.id = sourceId;
+        result.source.id = sourceId;
+      }
+      if (credential) {
+        await saveCredential({
+          sourceId,
+          kind: credential.kind,
+          token: credential.token,
+          workspace: credential.workspace,
+        });
+      }
+    }
     const stored = await addSource(summarizeForStorage(result));
     return NextResponse.json({ result, sources: stored }, { status: 200 });
   } catch (err) {
@@ -102,11 +177,18 @@ export async function POST(req: Request) {
   }
 }
 
+function clampLimit(value?: number): number {
+  if (!value || Number.isNaN(value)) return 50;
+  return Math.max(1, Math.min(MAX_CONNECTOR_MESSAGES, Math.floor(value)));
+}
+
 export async function GET() {
   return NextResponse.json({
     name: "multimail / api / ingest",
     methods: ["POST"],
-    kinds: ["text", "audio", "video"],
-    note: "Audio/video uses OpenAI Whisper when OPENAI_API_KEY is set; otherwise it falls back to a deterministic local mock so the pipeline shape stays the same.",
+    kinds: ["text", "audio", "video", "discord", "slack"],
+    note: "Audio/video uses OpenAI Whisper when OPENAI_API_KEY is set; otherwise it falls back to a deterministic local mock so the pipeline shape stays the same. Discord/Slack use live bot APIs and persist an encrypted token for refresh.",
   });
 }
+
+void newSourceId;

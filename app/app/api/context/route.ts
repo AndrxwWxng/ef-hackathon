@@ -26,7 +26,7 @@ function durationToMinutes(durationMs?: number): number {
 }
 
 function sourceMinutes(source: StoredSource): number {
-  if (source.modality === "text") {
+  if (source.modality === "text" || source.modality === "discord" || source.modality === "slack") {
     const words = (source.transcriptPreview ?? "").split(/\s+/).filter(Boolean).length;
     return words / 220;
   }
@@ -47,6 +47,8 @@ export async function GET(): Promise<NextResponse<ContextResponse>> {
   if (sources.some((s) => s.modality === "audio")) sectionHeadings.push("Voice notes");
   if (sources.some((s) => s.modality === "video")) sectionHeadings.push("Video transcripts");
   if (sources.some((s) => s.modality === "text")) sectionHeadings.push("Notes & docs");
+  if (sources.some((s) => s.modality === "discord")) sectionHeadings.push("Discord channels");
+  if (sources.some((s) => s.modality === "slack")) sectionHeadings.push("Slack channels");
 
   const sections: string[] = [];
   for (const heading of sectionHeadings) {
@@ -89,17 +91,24 @@ export async function GET(): Promise<NextResponse<ContextResponse>> {
 function sectionHeadingFor(source: StoredSource): string {
   if (source.modality === "audio") return "Voice notes";
   if (source.modality === "video") return "Video transcripts";
+  if (source.modality === "discord") return "Discord channels";
+  if (source.modality === "slack") return "Slack channels";
   return "Notes & docs";
 }
 
 function formatSourceBlock(source: StoredSource): string {
-  const meta = [
-    source.origin && source.origin !== "inline" ? source.origin : null,
+  const metaParts: (string | null | undefined)[] = [
+    source.connector
+      ? `${source.connector.kind} · #${source.connector.channelName ?? source.connector.channelId}` +
+        (source.connector.workspace ? ` @ ${source.connector.workspace}` : "") +
+        (source.connector.lastMessageCount ? ` · ${source.connector.lastMessageCount} msgs` : "")
+      : source.origin && source.origin !== "inline"
+        ? source.origin
+        : null,
     source.modality,
     source.durationMs ? `${(source.durationMs / 60000).toFixed(1)} min` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  ];
+  const meta = metaParts.filter(Boolean).join(" · ");
   const lines: string[] = [`### ${source.label}${meta ? ` — ${meta}` : ""}`];
   if (source.summary) lines.push(source.summary);
   if (source.bullets?.length) lines.push(...source.bullets.map(BULLET));

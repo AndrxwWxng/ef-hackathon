@@ -11,6 +11,14 @@ import {
   takeawaysFromTranscript,
 } from "./audio";
 import {
+  defaultLabelFor,
+  DiscordConnectorError,
+  fetchConnector,
+  formatConnectorTranscript,
+  SlackConnectorError,
+  type ConnectorFetchResult,
+} from "@/lib/connectors";
+import {
   countWords,
   normalizeText,
   takeawaysFromText,
@@ -65,6 +73,9 @@ function deriveOrigin(input: IngestInput): string {
   if ("origin" in input && input.origin) return input.origin;
   if ("filePath" in input && input.filePath) return input.filePath;
   if ("fileName" in input && input.fileName) return input.fileName ?? "buffer";
+  if (input.modality === "discord" || input.modality === "slack") {
+    return input.channelId;
+  }
   return "inline";
 }
 
@@ -101,6 +112,63 @@ async function ingestAudio(input: Extract<IngestInput, { modality: "audio" }>, w
   const takeaways = await runStage("extract", async () => takeawaysFromTranscript(transcript), (result) => `${result.bullets.length} bullets · ${result.keyPhrases.length} phrases`);
   await runStage("summarize", async () => takeaways, (result) => result.summary ? `${result.summary.length} chars` : "ok");
   return { transcript, takeaways, durationMs, bytes };
+}
+
+async function ingestConnector(
+  input: Extract<IngestInput, { modality: "discord" | "slack" }>,
+  log: (line: string) => void,
+  runStage: <T>(name: IngestStage, task: () => Promise<T>, summarize?: (result: T) => string | { skipped: boolean; detail: string }) => Promise<T>,
+): Promise<{
+  transcript: IngestTranscript;
+  takeaways: IngestTakeaways;
+  normalized: string;
+  connector: ConnectorFetchResult;
+  defaultLabel: string;
+}> {
+  const result = await runStage(
+    "receive",
+    async () =>
+      fetchConnector({
+        kind: input.modality,
+        token: input.token,
+        channelId: input.channelId,
+        limit: input.limit,
+        workspace: input.modality === "slack" ? input.workspace : undefined,
+      }),
+    (res) => `${res.messages.length} msgs · #${res.channel.name}${res.channel.workspace ? ` @ ${res.channel.workspace}` : ""}`,
+  );
+  if (result.messages.length === 0) {
+    const err =
+      input.modality === "discord"
+        ? new DiscordConnectorError("No messages returned from Discord. Is the bot in the channel?")
+        : new SlackConnectorError("No messages returned from Slack. Is the bot in the channel?");
+    throw err;
+  }
+  const raw = formatConnectorTranscript(input.modality, result);
+  log(`received ${result.messages.length} ${input.modality} messages from #${result.channel.name}`);
+  const normalized = await runStage(
+    "normalize",
+    async () => normalizeText(raw),
+    (out) => `${countWords(out)} words`,
+  );
+  const transcript = transcriptFromText(normalized, input.modality);
+  const takeaways = await runStage(
+    "extract",
+    async () => takeawaysFromText(normalized),
+    (res) => `${res.keyPhrases.length} phrases · ${res.themes.length} themes`,
+  );
+  await runStage(
+    "summarize",
+    async () => takeaways,
+    (res) => (res.summary ? `${res.summary.length} chars` : "ok"),
+  );
+  return {
+    transcript,
+    takeaways,
+    normalized,
+    connector: result,
+    defaultLabel: defaultLabelFor(input.modality, result),
+  };
 }
 
 async function ingestVideoItem(input: Extract<IngestInput, { modality: "video" }>, workDir: string, log: (line: string) => void, runStage: <T>(name: IngestStage, task: () => Promise<T>, summarize?: (result: T) => string | { skipped: boolean; detail: string }) => Promise<T>): Promise<{ transcript: IngestTranscript; takeaways: IngestTakeaways; durationMs: number; bytes: number }> {
@@ -176,6 +244,11 @@ export async function ingestSource(input: IngestInput, options: IngestOptions = 
   let durationMs: number | undefined;
   let bytes: number | undefined;
   let mimeType: string | undefined;
+  let connectorChannel: string | undefined;
+  let connectorWorkspace: string | undefined;
+  let connectorMessageCount: number | undefined;
+  let connectorFetchedAt: string | undefined;
+  let defaultLabel: string | undefined;
 
   try {
     if (modality === "text") {
@@ -186,23 +259,37 @@ export async function ingestSource(input: IngestInput, options: IngestOptions = 
       ({ transcript, takeaways } = out);
       durationMs = out.durationMs;
       bytes = out.bytes;
-    } else {
+    } else if (modality === "video") {
       if ("mimeType" in input) mimeType = input.mimeType;
       const out = await ingestVideoItem(input, workDir, log, runStep);
       ({ transcript, takeaways } = out);
       durationMs = out.durationMs;
       bytes = out.bytes;
+    } else {
+      const out = await ingestConnector(input, log, runStep);
+      transcript = out.transcript;
+      takeaways = out.takeaways;
+      connectorChannel = out.connector.channel.name;
+      connectorWorkspace = out.connector.channel.workspace;
+      connectorMessageCount = out.connector.messages.length;
+      connectorFetchedAt = out.connector.fetchedAt;
+      defaultLabel = out.defaultLabel;
+      bytes = Buffer.byteLength(out.normalized, "utf8");
     }
 
     const source: IngestSource = {
       id,
       modality,
-      label: input.label || MODALITY_LABEL[modality],
+      label: input.label || defaultLabel || MODALITY_LABEL[modality],
       origin: deriveOrigin(input),
       bytes,
       mimeType,
       durationMs,
       createdAt,
+      connectorChannel,
+      connectorWorkspace,
+      connectorMessageCount,
+      connectorFetchedAt,
       transcript,
       takeaways,
     };
@@ -228,4 +315,17 @@ export async function ingestBatch(batch: { items: IngestInput[]; options?: Inges
 export { AudioError } from "./audio";
 export { VideoError } from "./video";
 export { IngestError } from "./types";
-export type { IngestInput, IngestResult, IngestSource, IngestStage, IngestStep, IngestTranscript, IngestTakeaways, IngestTranscriptSegment, IngestOptions, Modality } from "./types";
+export type {
+  DiscordInput,
+  IngestInput,
+  IngestResult,
+  IngestSource,
+  IngestStage,
+  IngestStep,
+  IngestTranscript,
+  IngestTakeaways,
+  IngestTranscriptSegment,
+  IngestOptions,
+  Modality,
+  SlackInput,
+} from "./types";
