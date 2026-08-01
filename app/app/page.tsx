@@ -1003,13 +1003,13 @@ export default function AppHome() {
 function authorForKind(kind: ArtifactKind): string {
   if (kind === "newsletter") return "Multimail Team";
   if (kind === "linkedin") return "M. Kapoor";
-  return "polar-relay";
+  return "multimail";
 }
 
 function titleForKind(kind: ArtifactKind): string {
-  if (kind === "newsletter") return "Polar Relay · weekly";
-  if (kind === "linkedin") return "Founder · Polar Relay · weekly build notes";
-  return "· engineering at Polar Relay";
+  if (kind === "newsletter") return "Multimail · weekly";
+  if (kind === "linkedin") return "Founder · Multimail · weekly build notes";
+  return "· engineering at Multimail";
 }
 
 function SourceRow({
@@ -1124,7 +1124,7 @@ function ChannelPreview({
     ) : artifact.id === "linkedin" ? (
       <LinkedInPreview body={artifact.body} authorName={authorName} authorTitle={authorTitle} />
     ) : (
-      <XPreview body={artifact.body} authorName={authorName} authorHandle="polar_relay" />
+      <XPreview body={artifact.body} authorName={authorName} authorHandle="multimail_dev" />
     );
 
   return (

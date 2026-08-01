@@ -28,7 +28,7 @@ export function NewsletterPreview({ body, week, author }: Props) {
 
       <div className="px-8 py-10 sm:px-12 sm:py-12">
         <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-[#9ca3af]">
-          Polar Relay · weekly
+          Multimail · weekly
         </div>
         <h1 className="mt-3 text-[1.9rem] font-semibold leading-[1.1] tracking-[-0.02em] text-[#0a0a0a] sm:text-[2.1rem]">
           Sponsor dispatch
@@ -44,8 +44,8 @@ export function NewsletterPreview({ body, week, author }: Props) {
         </article>
         <hr className="my-9 border-t border-black/[0.08]" />
         <footer className="flex flex-col gap-1 text-[11.5px] text-[#6b7280]">
-          <div>You are receiving this because you sponsor Polar Relay.</div>
-          <div className="font-mono uppercase tracking-[0.12em]">© Polar Relay · {new Date().getFullYear()}</div>
+          <div>You are receiving this because you sponsor Multimail.</div>
+          <div className="font-mono uppercase tracking-[0.12em]">© Multimail · {new Date().getFullYear()}</div>
         </footer>
       </div>
     </div>

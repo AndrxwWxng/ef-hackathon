@@ -43,7 +43,7 @@ export function LinkedInPreview({ body, authorName, authorTitle }: Props) {
               <span className="font-normal text-[#5e5e5e]">· 1st</span>
             </div>
             <div className="text-[12.5px] text-[#5e5e5e]">
-              {authorTitle ?? "Founder, Polar Relay · weekly build notes"}
+              {authorTitle ?? "Founder, Multimail · weekly build notes"}
             </div>
             <div className="mt-0.5 flex items-center gap-1 text-[12px] text-[#5e5e5e]">
               <span>Just now</span>
