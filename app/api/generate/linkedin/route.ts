@@ -61,6 +61,9 @@ export async function POST(req: Request) {
         shape: history.data.shape,
         structure: history.data.structure,
         narrative: history.data.narrative,
+        deep: history.data.deep,
+        github: history.data.github,
+        comprehension: history.data.comprehension,
       }),
     );
     log("running linkedin agent…");

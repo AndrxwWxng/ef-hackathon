@@ -40,6 +40,21 @@ export function buildSourceContext(source: WeeklySource): string {
 
 export type DraftKind = "newsletter" | "linkedin" | "x";
 
+/**
+ * The source block now carries a digest produced by reading the actual diffs.
+ * These rules tell the writer to treat that as the real material, and to stay
+ * quiet where the evidence is thin instead of filling the gap with tone.
+ */
+export const GROUNDING_RULES =
+  "Grounding rules:\n" +
+  "- When the source contains a 'Deep read of the codebase' section, that is the authoritative account of the week. Build the draft from it. The commit list below it is corroboration, not your source of claims.\n" +
+  "- An item marked confidence 'low' may be mentioned only with hedged language, or left out. Never promote it to the headline.\n" +
+  "- Items listed under 'Not established by the code' are things you must not assert. Do not restate them as achievements or plans.\n" +
+  "- Only cite numbers that appear in the source. Do not compute impressive-sounding derived figures.\n" +
+  "- The 'what is next' beat must come from the in-progress items in the source. If there are none, write that the next step is not yet decided, or omit the beat. Never invent a roadmap.\n" +
+  "- If the window contains no user-facing change, say so plainly and describe the internal work honestly. A quiet week reported accurately is better than an invented launch.\n" +
+  "- If the source says the code was not read this run, keep every claim to what a commit message literally states.";
+
 const AUDIENCE_INSTRUCTIONS =
   "Audience: non-technical readers (sponsors, partners, and general users). They do not write code and do not follow engineering workflows. Write so a curious but non-technical person can read it end-to-end and feel informed, not lost.\n" +
   "They want to know what changed, what it means for them, and what is next. Voice the work in plain language. Keep concrete specs, numbers, and named features when they matter to the reader.\n" +

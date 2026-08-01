@@ -1,7 +1,10 @@
+import type { ComprehensionResult } from "./comprehend";
+import type { GitHubContext } from "./github";
 import type { Counts } from "./phase0";
 import type { Phase1Shape } from "./phase1";
 import type { Phase2Structure } from "./phase2";
 import type { Phase3Narrative } from "./phase3";
+import type { Phase4Deep } from "./phase4";
 import type { RepoHistoryMeta } from "./types";
 
 export function synthesizeAnalysis(args: {
@@ -9,8 +12,15 @@ export function synthesizeAnalysis(args: {
   shape: Phase1Shape;
   structure: Phase2Structure;
   narrative: Phase3Narrative;
+  deep?: Phase4Deep | null;
+  github?: GitHubContext | null;
+  comprehension?: ComprehensionResult | null;
+  warnings?: string[];
 }): string {
   const { meta, shape, structure, narrative } = args;
+  const deep = args.deep ?? null;
+  const github = args.github ?? null;
+  const comprehension = args.comprehension ?? null;
   const lines: string[] = [];
 
   lines.push(`# Repo History Analysis - ${meta.repoName}`);
@@ -26,9 +36,63 @@ export function synthesizeAnalysis(args: {
     `Counts: ${meta.totalCommits} commits total, ${meta.totalMerges} merges; ${meta.weekCommits} commits and ${meta.weekMerges} merges inside the window.`,
   );
   lines.push("");
+
+  if (comprehension) {
+    const { digest } = comprehension;
+    lines.push("## What this project is");
+    lines.push("");
+    lines.push(digest.project.oneLiner);
+    if (digest.project.whatItDoes) {
+      lines.push("");
+      lines.push(digest.project.whatItDoes);
+    }
+    lines.push("");
+    lines.push("## What happened this window");
+    lines.push("");
+    lines.push(`**${digest.window.headline}**`);
+    if (digest.window.summary) {
+      lines.push("");
+      lines.push(digest.window.summary);
+    }
+    lines.push("");
+    for (const [label, items] of [
+      ["Features", digest.features],
+      ["Fixes", digest.fixes],
+      ["Infrastructure", digest.infrastructure],
+    ] as const) {
+      if (items.length === 0) continue;
+      lines.push(`### ${label}`);
+      lines.push("");
+      for (const item of items) {
+        lines.push(`- **${item.title}** (${item.audience}, confidence ${item.confidence})`);
+        lines.push(`  - ${item.whatChanged}`);
+        lines.push(`  - Why it matters: ${item.whyItMatters}`);
+        if (item.evidence.length) lines.push(`  - Evidence: ${item.evidence.join("; ")}`);
+      }
+      lines.push("");
+    }
+    lines.push(
+      `_Read by ${comprehension.model} across ${comprehension.commitUnderstandings.length} commits with their diffs. Full digest in \`digest.md\`._`,
+    );
+    lines.push("");
+  }
+
   lines.push("## Overview");
   lines.push("");
   lines.push(renderOverview(structure));
+  if (github?.info?.description) {
+    lines.push("");
+    lines.push(`GitHub description: ${github.info.description}`);
+  }
+  if (deep && deep.routes.length > 0) {
+    lines.push("");
+    lines.push(
+      `Routes detected: ${deep.routes
+        .filter((r) => r.kind === "page")
+        .map((r) => r.route)
+        .join(", ") || "(no pages)"}`,
+    );
+  }
   lines.push("");
   lines.push("## Timeline (window)");
   lines.push("");
@@ -48,19 +112,93 @@ export function synthesizeAnalysis(args: {
   lines.push("");
   lines.push("## Uncertainties");
   lines.push("");
-  lines.push(
-    [
-      "- **Author vs commit date.** This report uses committer date (`%cd`) for the window and `%ad` per commit, matching the playbook's recommendation to pick one and stick with it. Rebases that rewrite `%cd` will shift entries.",
-      "- **No PR / issue context.** Zero merge commits and no remote PR refs in this repo means *why* behind a commit is not recoverable from git alone.",
-      "- **Identity fragmentation.** Only one author identity observed in the data; no `.mailmap` dedupe applied.",
-      "- **Single large initial scaffold.** If the repo was bootstrapped with a default project commit, pre-scaffold history is not present.",
-      "- **No CI / no tests.** Verification of builds, lint, or tests cannot be derived from the metadata alone.",
-      meta.windowAnchorMode === "last-commit"
-        ? "- **Window anchor.** Window is anchored to the most recent commit's committer date, not wall-clock time. If you want the last 7 calendar days, pass `windowAnchor: 'now'`."
-        : "- **Window anchor.** Window is anchored to wall-clock time.",
-    ].join("\n"),
-  );
+  lines.push(renderUncertainties({ meta, shape, deep, github, comprehension, warnings: args.warnings ?? [] }));
   return lines.join("\n");
+}
+
+/**
+ * Derived from what the run actually observed. An earlier version asserted a
+ * fixed list here ("zero merge commits", "only one author", "no CI"), which was
+ * wrong for most repos and flowed straight into the drafts.
+ */
+function renderUncertainties(args: {
+  meta: RepoHistoryMeta;
+  shape: Phase1Shape;
+  deep: Phase4Deep | null;
+  github: GitHubContext | null;
+  comprehension: ComprehensionResult | null;
+  warnings: string[];
+}): string {
+  const { meta, shape, deep, github, comprehension, warnings } = args;
+  const out: string[] = [];
+
+  out.push(
+    "- **Author vs commit date.** The window uses committer date; per-commit lines use author date. Rebases that rewrite committer dates will shift entries.",
+  );
+
+  if (!deep) {
+    out.push(
+      "- **No diffs read.** This run collected metadata only, so intent behind each commit is inferred from subjects rather than code.",
+    );
+  } else if (deep.budget.patchTruncated) {
+    out.push(
+      `- **Partial diff read.** The patch budget (${deep.budget.patchBytes.toLocaleString()} bytes) was exhausted, so some commits in the window were not read in full.`,
+    );
+  }
+
+  if (!github) {
+    out.push(
+      "- **No PR / issue context.** GitHub was not queried, so review discussion and PR descriptions are not part of this report.",
+    );
+  } else {
+    if (!github.authenticated) {
+      out.push(
+        "- **Unauthenticated GitHub access.** Rate limits are low and private repositories return nothing. Set `GITHUB_TOKEN` for complete data.",
+      );
+    }
+    if (github.pullRequests.length === 0) {
+      out.push(
+        "- **No merged PRs in the window.** Work landed directly on branches, so the stated *why* comes from commit messages and code alone.",
+      );
+    }
+    for (const err of github.errors) out.push(`- **GitHub fetch issue.** ${err}`);
+  }
+
+  if (!comprehension) {
+    out.push(
+      "- **No comprehension pass.** Feature grouping and rationale below are heuristic, not read from the code.",
+    );
+  } else {
+    for (const unknown of comprehension.digest.unknowns) {
+      out.push(`- **Not established by the code.** ${unknown}`);
+    }
+    for (const risk of comprehension.digest.risks) {
+      out.push(`- **Risk noted while reading.** ${risk}`);
+    }
+  }
+
+  if (shape.contributors.length === 1) {
+    out.push(
+      `- **Single contributor identity.** All ${shape.contributors[0].count} commits in the window are attributed to ${shape.contributors[0].name}; no \`.mailmap\` dedupe was applied.`,
+    );
+  } else if (shape.contributors.length > 1) {
+    out.push(
+      `- **Identity dedupe.** ${shape.contributors.length} author identities appear in the window; no \`.mailmap\` dedupe was applied, so one person may appear twice.`,
+    );
+  }
+
+  out.push(
+    meta.windowAnchorMode === "last-commit"
+      ? "- **Window anchor.** Anchored to the most recent commit's committer date, not wall-clock time. Pass `windowAnchor: 'now'` for the last N calendar days."
+      : "- **Window anchor.** Anchored to wall-clock time.",
+  );
+
+  for (const warning of warnings) {
+    if (warning.startsWith("GitHub:")) continue; // already covered above
+    out.push(`- **Run warning.** ${warning}`);
+  }
+
+  return out.join("\n");
 }
 
 function renderOverview(structure: Phase2Structure): string {

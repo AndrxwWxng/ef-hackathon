@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { ArrowRight, AlignLeft } from "lucide-react";
 
 function ArtifactMockup() {
   return (
@@ -112,7 +111,9 @@ export default function Landing() {
               className="group inline-flex h-12 items-center justify-center gap-2 rounded-full bg-[var(--ink)] px-6 text-sm font-medium text-[var(--paper)] transition-transform hover:-translate-y-px"
             >
               Open the app
-              <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+              <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M3 8h10M9 4l4 4-4 4" />
+              </svg>
             </Link>
             <Link
               href="#how"
@@ -285,7 +286,9 @@ export default function Landing() {
       <footer className="flex flex-col items-start justify-between gap-3 border-t border-[var(--border)] py-10 text-xs text-[var(--muted-foreground)] sm:flex-row sm:items-center">
         <div className="flex items-center gap-2">
           <span aria-hidden className="grid h-5 w-5 place-items-center rounded bg-[var(--accent)] text-[var(--paper)]">
-            <AlignLeft className="h-3 w-3" strokeWidth={2.4} />
+            <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M3 5h10M3 10h6M3 8h10" />
+            </svg>
           </span>
           <span className="font-serif text-[0.95rem] text-[var(--foreground)]">Multimail</span>
           <span className="opacity-60">·</span>

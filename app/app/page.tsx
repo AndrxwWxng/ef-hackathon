@@ -311,7 +311,42 @@ export default function AppHome() {
 
   const sourceWordLabel = context ? `${context.words.toLocaleString()} words` : "—";
   const sourceCountLabel = context ? `${context.sourceCount}` : "0";
-  const weekLabel = "Week 32 · Aug 4 – 10";
+  const [repoAge, setRepoAge] = useState<{ createdAt: string; weeks: number } | null>(null);
+
+  useEffect(() => {
+    const repoUrl = sourceConfig.github.trim();
+    if (!repoUrl) return;
+    const now = Date.now();
+    let cancelled = false;
+    const controller = new AbortController();
+    fetch(`/app/api/repo-age?repoUrl=${encodeURIComponent(repoUrl)}`, {
+      signal: controller.signal,
+      cache: "no-store",
+    })
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`status ${res.status}`))))
+      .then((json: { createdAt?: string }) => {
+        if (cancelled || !json.createdAt) return;
+        const created = new Date(json.createdAt);
+        if (Number.isNaN(created.getTime())) return;
+        const weeks = Math.max(0, Math.floor((now - created.getTime()) / (7 * 86_400_000)));
+        setRepoAge({ createdAt: json.createdAt, weeks });
+      })
+      .catch(() => {
+        /* leave previous value in place on failure */
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [sourceConfig.github]);
+
+  const weekLabel = useMemo(() => {
+    if (!repoAge) return "Week —";
+    const created = new Date(repoAge.createdAt);
+    if (Number.isNaN(created.getTime())) return "Week —";
+    const sinceFmt = new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric" });
+    return `Week ${repoAge.weeks} · since ${sinceFmt.format(created)}`;
+  }, [repoAge]);
 
   async function generateOne(kind: ArtifactKind): Promise<void> {
     setState({ status: "loading" });
