@@ -76,26 +76,66 @@ export function buildScreenshotTool(options: BuildScreenshotToolOptions = {}) {
       "Returns base64 PNG frames that the caller can embed in the post. Use this whenever the source includes an `App repo (screenshottable)` URL and you want to reference the actual UI in the draft.",
     parameters: screenshotToolParams,
     execute: async (input: ScreenshotToolParams) => {
-      const result = await generateRepoShots({
+      const callId = Math.random().toString(36).slice(2, 8);
+      const slog = (...args: unknown[]) => console.log(`[screenshot-tool ${callId}]`, ...args);
+      const slogErr = (...args: unknown[]) => console.error(`[screenshot-tool ${callId}]`, ...args);
+      slog("invoked", {
         repoUrl: input.repoUrl,
         routes: input.routes,
-        viewports: input.viewports as Parameters<typeof generateRepoShots>[0]["viewports"],
-        theme: input.theme as Parameters<typeof generateRepoShots>[0]["theme"],
+        viewports: input.viewports,
+        theme: input.theme,
         title: input.title,
+      });
+      const started = Date.now();
+      let result: Awaited<ReturnType<typeof generateRepoShots>>;
+      try {
+        result = await generateRepoShots({
+          repoUrl: input.repoUrl,
+          routes: input.routes,
+          viewports: input.viewports as Parameters<typeof generateRepoShots>[0]["viewports"],
+          theme: input.theme as Parameters<typeof generateRepoShots>[0]["theme"],
+          title: input.title,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unknown error";
+        const stack = err instanceof Error ? err.stack : undefined;
+        slogErr("generateRepoShots threw", { message, stack });
+        throw err;
+      }
+      slog("generateRepoShots returned", {
+        durationMs: Date.now() - started,
+        repoName: result.repoName,
+        repoUrl: result.repoUrl,
+        stepNames: result.steps.map((s) => s.name),
+        shotCount: result.shots.length,
+        shots: result.shots.map((s) => ({
+          id: s.id,
+          route: s.route,
+          viewport: s.viewport,
+          hasFramedPath: Boolean(s.framedPath),
+        })),
       });
       const frames: ScreenshotFrame[] = [];
       for (const shot of result.shots) {
         if (!shot.framedPath) continue;
-        const data = await fs.readFile(shot.framedPath, "base64");
-        frames.push({
-          id: shot.id,
-          route: shot.route,
-          viewport: shot.viewport,
-          width: shot.width,
-          height: shot.height,
-          mimeType: "image/png",
-          data,
-        });
+        try {
+          const data = await fs.readFile(shot.framedPath, "base64");
+          frames.push({
+            id: shot.id,
+            route: shot.route,
+            viewport: shot.viewport,
+            width: shot.width,
+            height: shot.height,
+            mimeType: "image/png",
+            data,
+          });
+        } catch (err) {
+          slogErr("failed to read framed screenshot", {
+            id: shot.id,
+            path: shot.framedPath,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
       const screenshots: ScreenshotResult = {
         repoUrl: result.repoUrl,
@@ -119,6 +159,7 @@ export function buildScreenshotTool(options: BuildScreenshotToolOptions = {}) {
           viewport: frame.viewport,
         })),
       };
+      slog("returning summary", { frameCount: frames.length, durationMs: Date.now() - started });
       return JSON.stringify(summary);
     },
   });
@@ -209,6 +250,9 @@ async function runDraftAgent(
   kind: "linkedin" | "newsletter",
   options: RunDraftAgentOptions,
 ): Promise<RunResult<unknown, DraftAgent>> {
+  const callId = Math.random().toString(36).slice(2, 8);
+  const log = (...args: unknown[]) => console.log(`[${kind}-agent ${callId}]`, ...args);
+  const logErr = (...args: unknown[]) => console.error(`[${kind}-agent ${callId}]`, ...args);
   const prompt = buildUserPrompt(options.source, kind, options.mood, resolveToneInstruction(options.mood));
   const sampleBlock = (options.writingSamples ?? [])
     .filter((sample) => sample.trim().length > 0)
@@ -217,7 +261,35 @@ async function runDraftAgent(
   const fullPrompt = sampleBlock
     ? `${prompt}\n\nWriting samples from the team (calibrate voice, do not lift sentences verbatim):\n${sampleBlock}`
     : prompt;
-  return run<DraftAgent, unknown>(agent, fullPrompt, { maxTurns: 6 });
+  log("starting", {
+    model: AGENT_MODEL,
+    promptLength: fullPrompt.length,
+    sampleCount: (options.writingSamples ?? []).filter((s) => s.trim().length > 0).length,
+    mood: options.mood ?? null,
+    appRepoScreenshottable: (options.source as { appRepoScreenshottable?: unknown }).appRepoScreenshottable ?? null,
+  });
+  const started = Date.now();
+  try {
+    const result = await run<DraftAgent, unknown>(agent, fullPrompt, { maxTurns: 6 });
+    log("finished", {
+      durationMs: Date.now() - started,
+      finalOutputLength: typeof result.finalOutput === "string" ? result.finalOutput.length : 0,
+      newItems: result.newItems?.length ?? 0,
+      rawResponses: result.rawResponses?.length ?? 0,
+      lastResponseId: result.lastResponseId ?? null,
+      newItemsSummary: (result.newItems ?? []).slice(-10).map((item) => {
+        const anyItem = item as { type?: string; name?: string; status?: string; role?: string };
+        return { type: anyItem.type, name: anyItem.name, status: anyItem.status, role: anyItem.role };
+      }),
+    });
+    return result;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    const stack = err instanceof Error ? err.stack : undefined;
+    const name = err instanceof Error ? err.name : undefined;
+    logErr("run() threw", { name, message, stack, durationMs: Date.now() - started });
+    throw err;
+  }
 }
 
 export type RunLinkedInAgentOptions = RunDraftAgentOptions & {
