@@ -24,16 +24,36 @@ function requireSource(source: WeeklySource | null): WeeklySource {
 }
 
 export async function POST(req: Request) {
+  const requestId = Math.random().toString(36).slice(2, 10);
+  const log = (...args: unknown[]) => console.log(`[linkedin ${requestId}]`, ...args);
+  const logErr = (...args: unknown[]) => console.error(`[linkedin ${requestId}]`, ...args);
+  log("POST /api/generate/linkedin received");
   try {
     const body = (await req.json().catch(() => ({}))) as Body;
+    log("body parsed", {
+      repoUrl: body.repoUrl,
+      branch: body.branch,
+      windowDays: body.windowDays,
+      windowAnchor: body.windowAnchor,
+      mood: body.mood,
+      writingSampleCount: body.writingSamples?.length ?? 0,
+    });
     if (!body.repoUrl) {
+      log("missing repoUrl, returning 400");
       return NextResponse.json({ error: "repoUrl is required" }, { status: 400 });
     }
+    log("generating repo history…");
     const history = await generateRepoHistory({
       repoUrl: body.repoUrl,
       branch: body.branch,
       windowDays: body.windowDays,
       windowAnchor: body.windowAnchor,
+    });
+    log("repo history ready", {
+      phases: history.phases,
+      meta: history.meta,
+      structureKeys: Object.keys(history.data.structure ?? {}),
+      narrativeKeys: Object.keys(history.data.narrative ?? {}),
     });
     const source = requireSource(
       projectToWeeklySource({
@@ -46,10 +66,26 @@ export async function POST(req: Request) {
         comprehension: history.data.comprehension,
       }),
     );
+    log("running linkedin agent…");
+    const agentStarted = Date.now();
     const { text, screenshots } = await runLinkedInAgent({
       source,
       mood: body.mood,
       writingSamples: body.writingSamples,
+    });
+    log("linkedin agent finished", {
+      durationMs: Date.now() - agentStarted,
+      textLength: text.length,
+      screenshots: screenshots
+        ? {
+            repoName: screenshots.repoName,
+            repoUrl: screenshots.repoUrl,
+            frameCount: screenshots.frames.length,
+            routes: screenshots.routes,
+            viewports: screenshots.viewports,
+            theme: screenshots.theme,
+          }
+        : null,
     });
     return NextResponse.json({
       kind: "linkedin",
@@ -59,6 +95,12 @@ export async function POST(req: Request) {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const stack = err instanceof Error ? err.stack : undefined;
+    const name = err instanceof Error ? err.name : undefined;
+    logErr("POST /api/generate/linkedin failed", { name, message, stack });
+    return NextResponse.json(
+      { error: message, requestId, kind: "linkedin" },
+      { status: 500 },
+    );
   }
 }
