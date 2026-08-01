@@ -6,15 +6,21 @@ import path from "node:path";
 
 import {
   AudioError,
-  hashBuffer,
   probeAudioDurationMs,
   transcribeAudio,
   takeawaysFromTranscript,
 } from "./audio";
 import {
+  defaultLabelFor,
+  DiscordConnectorError,
+  fetchConnector,
+  formatConnectorTranscript,
+  SlackConnectorError,
+  type ConnectorFetchResult,
+} from "@/lib/connectors";
+import {
   countWords,
   normalizeText,
-  readSteps,
   takeawaysFromText,
   transcriptFromText,
 } from "./text";
@@ -53,18 +59,10 @@ async function resolveWorkDir(opts: IngestOptions, modality: Modality, id: strin
   return dir;
 }
 
-async function resolveOutputDir(opts: IngestOptions, id: string): Promise<string> {
-  const root = opts.outputRoot ?? path.join(process.cwd(), ".ingest");
-  const dir = path.join(root, id);
-  await fs.mkdir(dir, { recursive: true });
-  return dir;
-}
-
-async function loadBufferFromPath(filePath: string): Promise<{ buffer: Buffer; bytes: number }> {
+async function loadBufferFromPath(filePath: string): Promise<{ bytes: number }> {
   const stat = await fs.stat(filePath);
   if (!stat.isFile()) throw new Error(`not a file: ${filePath}`);
-  const buffer = await fs.readFile(filePath);
-  return { buffer, bytes: stat.size };
+  return { bytes: stat.size };
 }
 
 function asBuffer(input: Buffer | Uint8Array): Buffer {
@@ -75,27 +73,28 @@ function deriveOrigin(input: IngestInput): string {
   if ("origin" in input && input.origin) return input.origin;
   if ("filePath" in input && input.filePath) return input.filePath;
   if ("fileName" in input && input.fileName) return input.fileName ?? "buffer";
+  if (input.modality === "discord" || input.modality === "slack") {
+    return input.channelId;
+  }
   return "inline";
 }
 
-async function ingestText(input: Extract<IngestInput, { modality: "text" }>, steps: IngestStep[], log: (line: string) => void, runStage: <T>(name: IngestStage, task: () => Promise<T>, summarize?: (result: T) => string | { skipped: boolean; detail: string }) => Promise<T>): Promise<{ transcript: IngestTranscript; takeaways: IngestTakeaways; normalized: string }> {
-  const id = randomUUID().replaceAll("-", "").slice(0, 16);
-  const createdAt = new Date().toISOString();
+async function ingestText(input: Extract<IngestInput, { modality: "text" }>, log: (line: string) => void, runStage: <T>(name: IngestStage, task: () => Promise<T>, summarize?: (result: T) => string | { skipped: boolean; detail: string }) => Promise<T>): Promise<{ transcript: IngestTranscript; takeaways: IngestTakeaways; normalized: string }> {
   log(`received text (${countWords(input.text)} words)`);
   const normalized = await runStage("normalize", async () => normalizeText(input.text), (result) => `${countWords(result)} words`);
   const transcript = transcriptFromText(normalized);
   const takeaways = await runStage("extract", async () => takeawaysFromText(normalized), (result) => `${result.keyPhrases.length} phrases · ${result.themes.length} themes`);
-  await runStage("summarize", async () => ({ ...takeaways, finishedAt: createdAt }), (result) => result.summary ? `${result.summary.length} chars` : "ok");
+  await runStage("summarize", async () => takeaways, (result) => result.summary ? `${result.summary.length} chars` : "ok");
   return { transcript, takeaways, normalized };
 }
 
-async function ingestAudio(input: Extract<IngestInput, { modality: "audio" }>, workDir: string, options: IngestOptions, steps: IngestStep[], log: (line: string) => void, runStage: <T>(name: IngestStage, task: () => Promise<T>, summarize?: (result: T) => string | { skipped: boolean; detail: string }) => Promise<T>): Promise<{ transcript: IngestTranscript; takeaways: IngestTakeaways; durationMs: number; bytes: number }> {
+async function ingestAudio(input: Extract<IngestInput, { modality: "audio" }>, workDir: string, log: (line: string) => void, runStage: <T>(name: IngestStage, task: () => Promise<T>, summarize?: (result: T) => string | { skipped: boolean; detail: string }) => Promise<T>): Promise<{ transcript: IngestTranscript; takeaways: IngestTakeaways; durationMs: number; bytes: number }> {
   const apiKey = process.env.OPENAI_API_KEY;
   let audioInput: { filePath?: string; buffer?: Buffer } = {};
   let bytes = 0;
   let durationMs = 0;
   if ("filePath" in input && input.filePath) {
-    const { buffer, bytes: size } = await loadBufferFromPath(input.filePath);
+    const { bytes: size } = await loadBufferFromPath(input.filePath);
     bytes = size;
     audioInput = { filePath: input.filePath };
     durationMs = await probeAudioDurationMs(input.filePath);
@@ -115,12 +114,69 @@ async function ingestAudio(input: Extract<IngestInput, { modality: "audio" }>, w
   return { transcript, takeaways, durationMs, bytes };
 }
 
-async function ingestVideoItem(input: Extract<IngestInput, { modality: "video" }>, workDir: string, options: IngestOptions, steps: IngestStep[], log: (line: string) => void, runStage: <T>(name: IngestStage, task: () => Promise<T>, summarize?: (result: T) => string | { skipped: boolean; detail: string }) => Promise<T>): Promise<{ transcript: IngestTranscript; takeaways: IngestTakeaways; durationMs: number; bytes: number }> {
+async function ingestConnector(
+  input: Extract<IngestInput, { modality: "discord" | "slack" }>,
+  log: (line: string) => void,
+  runStage: <T>(name: IngestStage, task: () => Promise<T>, summarize?: (result: T) => string | { skipped: boolean; detail: string }) => Promise<T>,
+): Promise<{
+  transcript: IngestTranscript;
+  takeaways: IngestTakeaways;
+  normalized: string;
+  connector: ConnectorFetchResult;
+  defaultLabel: string;
+}> {
+  const result = await runStage(
+    "receive",
+    async () =>
+      fetchConnector({
+        kind: input.modality,
+        token: input.token,
+        channelId: input.channelId,
+        limit: input.limit,
+        workspace: input.modality === "slack" ? input.workspace : undefined,
+      }),
+    (res) => `${res.messages.length} msgs · #${res.channel.name}${res.channel.workspace ? ` @ ${res.channel.workspace}` : ""}`,
+  );
+  if (result.messages.length === 0) {
+    const err =
+      input.modality === "discord"
+        ? new DiscordConnectorError("No messages returned from Discord. Is the bot in the channel?")
+        : new SlackConnectorError("No messages returned from Slack. Is the bot in the channel?");
+    throw err;
+  }
+  const raw = formatConnectorTranscript(input.modality, result);
+  log(`received ${result.messages.length} ${input.modality} messages from #${result.channel.name}`);
+  const normalized = await runStage(
+    "normalize",
+    async () => normalizeText(raw),
+    (out) => `${countWords(out)} words`,
+  );
+  const transcript = transcriptFromText(normalized, input.modality);
+  const takeaways = await runStage(
+    "extract",
+    async () => takeawaysFromText(normalized),
+    (res) => `${res.keyPhrases.length} phrases · ${res.themes.length} themes`,
+  );
+  await runStage(
+    "summarize",
+    async () => takeaways,
+    (res) => (res.summary ? `${res.summary.length} chars` : "ok"),
+  );
+  return {
+    transcript,
+    takeaways,
+    normalized,
+    connector: result,
+    defaultLabel: defaultLabelFor(input.modality, result),
+  };
+}
+
+async function ingestVideoItem(input: Extract<IngestInput, { modality: "video" }>, workDir: string, log: (line: string) => void, runStage: <T>(name: IngestStage, task: () => Promise<T>, summarize?: (result: T) => string | { skipped: boolean; detail: string }) => Promise<T>): Promise<{ transcript: IngestTranscript; takeaways: IngestTakeaways; durationMs: number; bytes: number }> {
   const apiKey = process.env.OPENAI_API_KEY;
   let videoInput: { filePath?: string; buffer?: Buffer } = {};
   let bytes = 0;
   if ("filePath" in input && input.filePath) {
-    const { buffer, bytes: size } = await loadBufferFromPath(input.filePath);
+    const { bytes: size } = await loadBufferFromPath(input.filePath);
     bytes = size;
     videoInput = { filePath: input.filePath };
     log(`received video file ${path.basename(input.filePath)} (${(size / 1024 / 1024).toFixed(1)} MB)`);
@@ -146,7 +202,6 @@ export async function ingestSource(input: IngestInput, options: IngestOptions = 
   const createdAt = new Date().toISOString();
   const logs: string[] = [];
   const steps = makeStages(modality);
-  const outputDir = await resolveOutputDir(options, id);
   const workDir = await resolveWorkDir(options, modality, id);
   const log = (line: string) => {
     const clean = line.replace(/\r/g, "").trimEnd();
@@ -182,46 +237,61 @@ export async function ingestSource(input: IngestInput, options: IngestOptions = 
       throw new IngestError(name, modality, error, steps.map((item) => ({ ...item })), [...logs]);
     }
   };
-  void readSteps;
+  void steps;
 
   let transcript: IngestTranscript | undefined;
   let takeaways: IngestTakeaways | undefined;
   let durationMs: number | undefined;
   let bytes: number | undefined;
   let mimeType: string | undefined;
-  let fileName: string | undefined;
+  let connectorChannel: string | undefined;
+  let connectorWorkspace: string | undefined;
+  let connectorMessageCount: number | undefined;
+  let connectorFetchedAt: string | undefined;
+  let defaultLabel: string | undefined;
 
   try {
     if (modality === "text") {
-      ({ transcript, takeaways } = await ingestText(input, steps, log, runStep));
+      ({ transcript, takeaways } = await ingestText(input, log, runStep));
     } else if (modality === "audio") {
       if ("mimeType" in input) mimeType = input.mimeType;
-      if ("fileName" in input) fileName = input.fileName;
-      const out = await ingestAudio(input, workDir, options, steps, log, runStep);
+      const out = await ingestAudio(input, workDir, log, runStep);
+      ({ transcript, takeaways } = out);
+      durationMs = out.durationMs;
+      bytes = out.bytes;
+    } else if (modality === "video") {
+      if ("mimeType" in input) mimeType = input.mimeType;
+      const out = await ingestVideoItem(input, workDir, log, runStep);
       ({ transcript, takeaways } = out);
       durationMs = out.durationMs;
       bytes = out.bytes;
     } else {
-      if ("mimeType" in input) mimeType = input.mimeType;
-      if ("fileName" in input) fileName = input.fileName;
-      const out = await ingestVideoItem(input, workDir, options, steps, log, runStep);
-      ({ transcript, takeaways } = out);
-      durationMs = out.durationMs;
-      bytes = out.bytes;
+      const out = await ingestConnector(input, log, runStep);
+      transcript = out.transcript;
+      takeaways = out.takeaways;
+      connectorChannel = out.connector.channel.name;
+      connectorWorkspace = out.connector.channel.workspace;
+      connectorMessageCount = out.connector.messages.length;
+      connectorFetchedAt = out.connector.fetchedAt;
+      defaultLabel = out.defaultLabel;
+      bytes = Buffer.byteLength(out.normalized, "utf8");
     }
 
     const source: IngestSource = {
       id,
       modality,
-      label: input.label || MODALITY_LABEL[modality],
+      label: input.label || defaultLabel || MODALITY_LABEL[modality],
       origin: deriveOrigin(input),
       bytes,
       mimeType,
       durationMs,
       createdAt,
+      connectorChannel,
+      connectorWorkspace,
+      connectorMessageCount,
+      connectorFetchedAt,
       transcript,
       takeaways,
-      ...(fileName ? {} : {}),
     };
 
     return {
@@ -242,9 +312,20 @@ export async function ingestBatch(batch: { items: IngestInput[]; options?: Inges
   return Promise.all(batch.items.map((item) => ingestSource(item, batch.options)));
 }
 
-export {
-  AudioError,
-  VideoError,
-  IngestError,
+export { AudioError } from "./audio";
+export { VideoError } from "./video";
+export { IngestError } from "./types";
+export type {
+  DiscordInput,
+  IngestInput,
+  IngestResult,
+  IngestSource,
+  IngestStage,
+  IngestStep,
+  IngestTranscript,
+  IngestTakeaways,
+  IngestTranscriptSegment,
+  IngestOptions,
+  Modality,
+  SlackInput,
 } from "./types";
-export type { IngestInput, IngestResult, IngestSource, IngestStage, IngestStep, IngestTranscript, IngestTakeaways, IngestTranscriptSegment, IngestOptions, Modality } from "./types";

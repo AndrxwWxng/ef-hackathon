@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
+import { NewsletterPreview } from "./_components/NewsletterPreview";
+import { LinkedInPreview } from "./_components/LinkedInPreview";
+import { XPreview } from "./_components/XPreview";
+
 type Modality = "text" | "audio" | "video" | "discord" | "slack";
 
 type Source = {
@@ -47,6 +51,7 @@ type Artifact = {
   metric: string;
   tone: string;
   imageDataUrl?: string;
+  generated?: boolean;
 };
 
 type GenerationState = {
@@ -101,9 +106,26 @@ const MODALITY_META: Record<Modality, { label: string; meta: string; placeholder
 };
 
 const runSizes = [
-  { id: "small", label: "Newsletter", note: "1 source" },
-  { id: "medium", label: "Newsletter + LinkedIn", note: "All sources" },
-  { id: "full", label: "Newsletter + LinkedIn + X", note: "All sources" },
+  { id: "newsletter", label: "Newsletter", note: "350-550 words" },
+  { id: "linkedin", label: "LinkedIn", note: "~1,000 chars" },
+  { id: "x", label: "X post", note: "240-280 chars" },
+];
+
+type SourceConfig = {
+  github: string;
+  writingSamples: string[];
+  mood: string;
+};
+
+const MOOD_OPTIONS: { id: string; label: string; hint: string }[] = [
+  { id: "default", label: "Default", hint: "Neutral, professional voice" },
+  { id: "Calm and measured", label: "Calm and measured", hint: "Short sentences, no hype" },
+  { id: "Warm and personal", label: "Warm and personal", hint: "First-person, direct to reader" },
+  { id: "Direct and punchy", label: "Direct and punchy", hint: "Leads with the news" },
+  { id: "Witty and a bit dry", label: "Witty and a bit dry", hint: "Light, subtle humor" },
+  { id: "Playful and energetic", label: "Playful and energetic", hint: "Enthusiastic, not breathless" },
+  { id: "Technical and matter-of-fact", label: "Technical and matter-of-fact", hint: "Engineer-coded, file-level" },
+  { id: "Visionary and forward-looking", label: "Visionary and forward-looking", hint: "Frames a longer arc" },
 ];
 
 const initialArtifacts: Artifact[] = [
@@ -246,7 +268,9 @@ type ComposerState =
 
 export default function AppHome() {
   const [activeId, setActiveId] = useState<ArtifactKind>("newsletter");
-  const [size, setSize] = useState<string>("full");
+  const [targets, setTargets] = useState<Set<ArtifactKind>>(
+    new Set<ArtifactKind>(["newsletter", "linkedin", "x"]),
+  );
   const [running, setRunning] = useState(false);
   const [sources, setSources] = useState<Source[]>([]);
   const [context, setContext] = useState<ContextSummary | null>(null);
@@ -259,6 +283,13 @@ export default function AppHome() {
   const [pendingFile, setPendingFile] = useState<{ modality: "audio" | "video"; file: File } | null>(null);
   const [artifacts, setArtifacts] = useState<Artifact[]>(initialArtifacts);
   const [state, setState] = useState<GenerationState>({ status: "idle" });
+  const [sourceConfig, setSourceConfig] = useState<SourceConfig>({
+    github: "multimail/api",
+    writingSamples: [
+      "We shipped a faster ingest path (4x), closed two long-standing integration gaps, and softened the digest tone.",
+    ],
+    mood: "Calm and measured",
+  });
 
   const active = useMemo(
     () => artifacts.find((a) => a.id === activeId) ?? artifacts[0],
@@ -295,10 +326,25 @@ export default function AppHome() {
     refresh().catch(() => undefined);
   }, [refresh]);
 
+  const writtenSamples = sourceConfig.writingSamples.filter((s) => s.trim().length > 0);
+
+  const payloadBody = JSON.stringify({
+    mood: sourceConfig.mood === "default" ? undefined : sourceConfig.mood,
+    writingSamples: writtenSamples,
+  });
+
+  const githubDisplay = sourceConfig.github.trim().length > 0
+    ? sourceConfig.github.trim()
+    : "owner/repo";
+
   async function generateOne(kind: ArtifactKind): Promise<void> {
     setState({ status: "loading" });
     try {
-      const textRes = await fetch(ENDPOINT_BY_KIND[kind], { method: "POST" });
+      const textRes = await fetch(ENDPOINT_BY_KIND[kind], {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payloadBody,
+      });
       if (!textRes.ok) {
         const errBody = (await textRes.json().catch(() => ({}))) as { error?: string };
         throw new Error(errBody.error ?? `text request failed (${textRes.status})`);
@@ -324,6 +370,7 @@ export default function AppHome() {
                 body: textJson.text,
                 metric: approxMetric(kind, textJson.text),
                 imageDataUrl,
+                generated: true,
               }
             : a,
         ),
@@ -336,6 +383,10 @@ export default function AppHome() {
   }
 
   async function handleRun() {
+    if (targets.size === 0) {
+      setState({ status: "error", error: "Pick at least one artifact to generate." });
+      return;
+    }
     setRunning(true);
     setState({ status: "loading" });
     try {
@@ -386,7 +437,42 @@ export default function AppHome() {
       setState({ status: "error", error: message });
     } finally {
       setRunning(false);
+    const order: ArtifactKind[] = ["newsletter", "linkedin", "x"];
+    for (const t of order) {
+      if (!targets.has(t)) continue;
+      await generateOne(t);
     }
+  }
+
+  function toggleTarget(kind: ArtifactKind) {
+    setTargets((prev) => {
+      const next = new Set(prev);
+      if (next.has(kind)) next.delete(kind);
+      else next.add(kind);
+      return next;
+    });
+  }
+
+  function updateSample(idx: number, value: string) {
+    setSourceConfig((prev) => {
+      const samples = [...prev.writingSamples];
+      samples[idx] = value;
+      return { ...prev, writingSamples: samples };
+    });
+  }
+
+  function addSample() {
+    setSourceConfig((prev) => ({
+      ...prev,
+      writingSamples: [...prev.writingSamples, ""],
+    }));
+  }
+
+  function removeSample(idx: number) {
+    setSourceConfig((prev) => ({
+      ...prev,
+      writingSamples: prev.writingSamples.filter((_, i) => i !== idx),
+    }));
   }
 
   async function handleRegenerate() {
@@ -562,8 +648,8 @@ export default function AppHome() {
           <button
             type="button"
             onClick={handleRun}
-            disabled={isGenerating}
-            className="group inline-flex h-10 items-center justify-center gap-2 rounded-full bg-[var(--app-ink)] px-5 text-sm font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px disabled:opacity-50"
+            disabled={isGenerating || targets.size === 0}
+            className="group inline-flex h-10 items-center justify-center gap-2 rounded-full bg-[var(--app-ink)] px-5 text-sm font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isGenerating ? "Running…" : "Run the week"}
             <svg
@@ -747,22 +833,192 @@ export default function AppHome() {
           <section className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
             <div className="flex items-center justify-between">
               <h2 className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                Configurable sources
+              </h2>
+              <span className="font-mono text-[11px] text-[var(--app-muted)]">
+                {(writtenSamples.length + (sourceConfig.github.trim() ? 1 : 0))} active
+              </span>
+            </div>
+
+            <div className="flex flex-col gap-2 rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)]/40 p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span aria-hidden className="grid h-5 w-5 place-items-center rounded-md bg-[#0f172a] text-white">
+                    <svg viewBox="0 0 16 16" className="h-3 w-3" fill="currentColor" aria-hidden>
+                      <path d="M8 .2a8 8 0 0 0-2.5 15.6c.4.1.5-.2.5-.4v-1.4c-2.2.5-2.7-1-2.7-1-.4-.9-.9-1.2-.9-1.2-.7-.5.1-.5.1-.5.8.1 1.2.8 1.2.8.7 1.2 1.9.9 2.4.7.1-.5.3-.9.5-1.1-1.8-.2-3.6-.9-3.6-3.9 0-.9.3-1.6.8-2.1-.1-.2-.4-1 .1-2.1 0 0 .7-.2 2.2.8a7.7 7.7 0 0 1 4 0c1.5-1 2.2-.8 2.2-.8.5 1.1.2 1.9.1 2.1.5.5.8 1.2.8 2.1 0 3-1.8 3.7-3.6 3.9.3.3.6.8.6 1.6v2.4c0 .2.1.5.5.4A8 8 0 0 0 8 .2z" />
+                    </svg>
+                  </span>
+                  <span className="text-[12.5px] font-medium">GitHub</span>
+                </div>
+                <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-accent)]">
+                  connected
+                </span>
+              </div>
+              <label className="flex flex-col gap-1">
+                <span className="sr-only">GitHub repository</span>
+                <input
+                  type="text"
+                  value={sourceConfig.github}
+                  onChange={(event) =>
+                    setSourceConfig((prev) => ({ ...prev, github: event.target.value }))
+                  }
+                  placeholder="owner/repo or https://github.com/owner/repo"
+                  className="h-9 w-full rounded-md border border-[var(--app-line)] bg-[var(--app-paper)] px-3 font-mono text-[12px] outline-none transition-colors focus:border-[var(--app-ink)]"
+                />
+              </label>
+              <p className="text-[10.5px] leading-snug text-[var(--app-muted)]">
+                Paste a repo URL or <span className="font-mono">owner/repo</span>. We pull merged PRs + commits for the selected week.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2 rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)]/40 p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span aria-hidden className="grid h-5 w-5 place-items-center rounded-md bg-[var(--app-ink)] text-[var(--app-paper)] font-serif text-[10px]">
+                    Aa
+                  </span>
+                  <span className="text-[12.5px] font-medium">Writing samples</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={addSample}
+                  className="rounded-full border border-[var(--app-line)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-ink)]"
+                >
+                  + add
+                </button>
+              </div>
+              <div className="flex flex-col gap-2">
+                {sourceConfig.writingSamples.map((sample, idx) => (
+                  <div key={`sample-${idx}`} className="flex flex-col gap-1.5">
+                    <label className="flex flex-col gap-1">
+                      <span className="sr-only">Writing sample {idx + 1}</span>
+                      <textarea
+                        rows={2}
+                        value={sample}
+                        onChange={(event) => updateSample(idx, event.target.value)}
+                        placeholder={`Paste an example ${idx === 0 ? "newsletter intro" : "post"} from your team…`}
+                        className="w-full resize-none rounded-md border border-[var(--app-line)] bg-[var(--app-paper)] px-3 py-2 text-[12px] leading-snug outline-none transition-colors focus:border-[var(--app-ink)]"
+                      />
+                    </label>
+                    {sourceConfig.writingSamples.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeSample(idx)}
+                        className="self-end font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-accent)]"
+                      >
+                        remove
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10.5px] leading-snug text-[var(--app-muted)]">
+                Used to calibrate voice. The drafts read from your team&apos;s words, they do not lift sentences.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2 rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)]/40 p-3">
+              <div className="flex items-center justify-between">
+                <h3 className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                  Mood / tone
+                </h3>
+                <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
+                  {sourceConfig.mood === "default" ? "default" : "applied"}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {MOOD_OPTIONS.map((m) => {
+                  const selected = sourceConfig.mood === m.id;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() =>
+                        setSourceConfig((prev) => ({ ...prev, mood: m.id }))
+                      }
+                      aria-pressed={selected}
+                      className={
+                        "flex flex-col items-start gap-0.5 rounded-md border px-2 py-1.5 text-left transition-all " +
+                        (selected
+                          ? "border-[var(--app-ink)] bg-[var(--app-soft)] shadow-[0_8px_24px_-16px_rgba(15,23,42,0.35)]"
+                          : "border-[var(--app-line)] bg-[var(--app-paper)] hover:border-[var(--app-muted)]")
+                      }
+                    >
+                      <span className="text-[11.5px] font-medium text-[var(--app-ink)]">
+                        {m.label}
+                      </span>
+                      <span className="text-[10px] leading-snug text-[var(--app-muted)]">
+                        {m.hint}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+
+          {context && context.sourceCount > 0 && (
+            <section className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
+              <div className="flex items-center justify-between">
+                <h2 className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                  Ingested context
+                </h2>
+                <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
+                  {context.tone}
+                </span>
+              </div>
+              {context.themes.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {context.themes.map((theme) => (
+                    <span
+                      key={theme}
+                      className="rounded-full bg-[var(--app-soft)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--app-ink)]"
+                    >
+                      {theme}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {context.bullets.length > 0 && (
+                <ul className="flex flex-col gap-1 text-[11.5px] leading-snug text-[var(--app-ink)]">
+                  {context.bullets.slice(0, 4).map((bullet, i) => (
+                    <li key={i} className="flex gap-2">
+                      <span aria-hidden className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-[var(--app-accent)]" />
+                      <span>{bullet}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <details className="text-[11px] text-[var(--app-muted)]">
+                <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.16em]">
+                  Raw context for the agent
+                </summary>
+                <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--app-line)] bg-[var(--app-soft)] p-3 text-[11px] leading-relaxed text-[var(--app-ink)]">
+                  {context.body}
+                </pre>
+              </details>
+            </section>
+          )}
+
+          <section className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
                 Run size
               </h2>
               <span className="font-mono text-[11px] text-[var(--app-muted)]">
-                1× week
+                {targets.size}/3 selected
               </span>
             </div>
-            <div role="radiogroup" aria-label="Run size" className="flex flex-col">
+            <div className="flex flex-col">
               {runSizes.map((option, i) => {
-                const selected = size === option.id;
+                const selected = targets.has(option.id as ArtifactKind);
                 return (
                   <button
                     key={option.id}
                     type="button"
-                    role="radio"
+                    role="checkbox"
                     aria-checked={selected}
-                    onClick={() => setSize(option.id)}
+                    onClick={() => toggleTarget(option.id as ArtifactKind)}
                     className={
                       "group flex items-center justify-between gap-3 py-2.5 text-left transition-colors " +
                       (i !== 0 ? "border-t border-[var(--app-line)]" : "")
@@ -772,14 +1028,16 @@ export default function AppHome() {
                       <span
                         aria-hidden
                         className={
-                          "grid h-4 w-4 place-items-center rounded-full border " +
+                          "grid h-4 w-4 place-items-center rounded border transition-colors " +
                           (selected
-                            ? "border-[var(--app-ink)]"
+                            ? "border-[var(--app-ink)] bg-[var(--app-ink)] text-[var(--app-paper)]"
                             : "border-[var(--app-line)] group-hover:border-[var(--app-muted)]")
                         }
                       >
                         {selected && (
-                          <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-ink)]" />
+                          <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                            <path d="M3 8l3 3 7-7" />
+                          </svg>
                         )}
                       </span>
                       <span
@@ -799,6 +1057,22 @@ export default function AppHome() {
                   </button>
                 );
               })}
+            </div>
+            <div className="flex items-center justify-between gap-2 border-t border-[var(--app-line)] pt-2">
+              <button
+                type="button"
+                onClick={() => setTargets(new Set(["newsletter", "linkedin", "x"]))}
+                className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-ink)]"
+              >
+                select all
+              </button>
+              <button
+                type="button"
+                onClick={() => setTargets(new Set())}
+                className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-ink)]"
+              >
+                clear
+              </button>
             </div>
           </section>
         </aside>
@@ -880,8 +1154,8 @@ export default function AppHome() {
                 <button
                   type="button"
                   onClick={handleRegenerate}
-                  disabled={isGenerating}
-                  className="inline-flex h-7 items-center justify-center rounded-full border border-[var(--app-line)] px-3 text-[11.5px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)] disabled:opacity-50"
+                  disabled={isGenerating || !targets.has(active.id)}
+                  className="inline-flex h-7 items-center justify-center rounded-full border border-[var(--app-line)] px-3 text-[11.5px] font-medium text-[var(--app-ink)] transition-colors hover:bg-[var(--app-soft)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Regenerate
                 </button>
@@ -894,7 +1168,7 @@ export default function AppHome() {
                   }}
                   className="inline-flex h-7 items-center justify-center gap-1.5 rounded-full bg-[var(--app-ink)] px-3 text-[11.5px] font-medium text-[var(--app-paper)] transition-transform hover:-translate-y-px"
                 >
-                  Copy
+                  Copy markdown
                   <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                     <rect x="5" y="5" width="8" height="8" rx="1.5" />
                     <path d="M3 11V3.5A.5.5 0 0 1 3.5 3H11" />
@@ -902,16 +1176,27 @@ export default function AppHome() {
                 </button>
               </div>
             </div>
-            <div className="grid gap-4 px-5 py-5 sm:px-6 sm:py-6">
-              {active.imageDataUrl && (
-                <div className="overflow-hidden rounded-xl border border-[var(--app-line)]">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={active.imageDataUrl}
-                    alt={`${active.label} generated image`}
-                    className="block w-full"
-                  />
-                </div>
+            <div className="bg-[var(--app-bg)] px-3 py-6 sm:px-6 sm:py-10">
+              <ChannelPreview
+                artifact={active}
+                githubDisplay={githubDisplay}
+                authorName={authorForKind(active.id)}
+                authorTitle={titleForKind(active.id)}
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-[var(--app-line)] px-4 py-2.5 font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+              <span>Source · {githubDisplay}</span>
+              <span className="text-[var(--app-line)]">·</span>
+              <span>Mood · {sourceConfig.mood === "default" ? "default" : sourceConfig.mood}</span>
+              <span className="text-[var(--app-line)]">·</span>
+              <span>Voice · {writtenSamples.length} sample{writtenSamples.length === 1 ? "" : "s"}</span>
+              <span className="text-[var(--app-line)]">·</span>
+              <span>Length · {active.metric}</span>
+              {context && context.sourceCount > 0 && (
+                <>
+                  <span className="text-[var(--app-line)]">·</span>
+                  <span>Context · {context.sourceCount} source{context.sourceCount === 1 ? "" : "s"}</span>
+                </>
               )}
               <p className="whitespace-pre-wrap font-serif text-[1.05rem] leading-[1.45] text-[var(--app-ink)] sm:text-[1.15rem]">
                 {active.body}
@@ -1183,5 +1468,94 @@ export default function AppHome() {
         </div>
       )}
     </main>
+  );
+}
+
+function authorForKind(kind: ArtifactKind): string {
+  if (kind === "newsletter") return "Multimail Team";
+  if (kind === "linkedin") return "M. Kapoor";
+  return "polar-relay";
+}
+
+function titleForKind(kind: ArtifactKind): string {
+  if (kind === "newsletter") return "Polar Relay · weekly";
+  if (kind === "linkedin") return "Founder · Polar Relay · weekly build notes";
+  return "· engineering at Polar Relay";
+}
+
+function ChannelPreview({
+  artifact,
+  authorName,
+  authorTitle,
+  githubDisplay,
+}: {
+  artifact: Artifact;
+  authorName?: string;
+  authorTitle?: string;
+  githubDisplay?: string;
+}) {
+  if (artifact.id === "newsletter") {
+    return (
+      <div className="mx-auto max-w-2xl">
+        <NewsletterPreview body={artifact.body} author={authorName} week={githubDisplay} />
+        {!artifact.generated && (
+          <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+            Run the week to generate a draft.
+          </p>
+        )}
+        {artifact.imageDataUrl && (
+          <div className="mx-auto mt-4 max-w-2xl overflow-hidden rounded-xl border border-[var(--app-line)]">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={artifact.imageDataUrl}
+              alt={`${artifact.label} generated image`}
+              className="block w-full"
+            />
+          </div>
+        )}
+      </div>
+    );
+  }
+  if (artifact.id === "linkedin") {
+    return (
+      <div className="mx-auto max-w-xl">
+        <LinkedInPreview body={artifact.body} authorName={authorName} authorTitle={authorTitle} />
+        {!artifact.generated && (
+          <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+            Run the week to generate a draft.
+          </p>
+        )}
+        {artifact.imageDataUrl && (
+          <div className="mx-auto mt-4 max-w-xl overflow-hidden rounded-xl border border-[var(--app-line)]">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={artifact.imageDataUrl}
+              alt={`${artifact.label} generated image`}
+              className="block w-full"
+            />
+          </div>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="mx-auto max-w-lg">
+      <XPreview body={artifact.body} authorName={authorName} authorHandle="polar_relay" />
+      {!artifact.generated && (
+        <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+          Run the week to generate a draft.
+        </p>
+      )}
+      {artifact.imageDataUrl && (
+        <div className="mx-auto mt-4 max-w-lg overflow-hidden rounded-xl border border-[var(--app-line)]">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={artifact.imageDataUrl}
+            alt={`${artifact.label} generated image`}
+            className="block w-full"
+          />
+        </div>
+      )}
+    </div>
   );
 }

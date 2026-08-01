@@ -48,20 +48,12 @@ export default function RootLayout({
                 Multimail
               </span>
             </Link>
-            <div className="flex items-center gap-2 text-sm sm:gap-6">
-              <Link
-                href="/app"
-                className="hidden text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)] sm:inline"
-              >
-                Open app
-              </Link>
-              <a
-                href="#waitlist"
-                className="rounded-full bg-[var(--ink)] px-4 py-2 text-[var(--paper)] transition-transform hover:-translate-y-px"
-              >
-                Join waitlist
-              </a>
-            </div>
+            <Link
+              href="/app"
+              className="text-sm text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
+            >
+              Open app →
+            </Link>
           </nav>
         </header>
         <div className="flex flex-1 flex-col">{children}</div>
