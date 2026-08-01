@@ -56,6 +56,17 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+html,
+body {
+  overscroll-behavior: none;
+  scrollbar-width: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none;
+}
+
 ::selection {
   background: var(--accent);
   color: var(--paper);
@@ -68,30 +79,35 @@ body {
   }
 }
 
-/* App workspace: a different visual plane than the landing.
-   Cool graphite / paper instead of the landing's warm cream. */
+/* App workspace: a clean, neutral canvas. The previews inside the workspace
+   carry their own brand styling (LinkedIn, X, Newsletter), so the shell stays
+   monochrome on purpose. */
 .app-scope {
-  --app-bg: #eef0f4;
-  --app-panel: #fbfcfe;
-  --app-soft: #e5e8ef;
-  --app-line: #d8dde6;
-  --app-grid: #dde2eb;
-  --app-ink: #0f172a;
-  --app-muted: #5b6478;
-  --app-paper: #fbfcfe;
-  --app-accent: #e0532b;
+  --app-bg: #fafafa;
+  --app-panel: #ffffff;
+  --app-soft: #f4f4f5;
+  --app-line: #e7e7ea;
+  --app-grid: #f4f4f5;
+  --app-ink: #0a0a0a;
+  --app-muted: #71717a;
+  --app-faint: #a1a1aa;
+  --app-paper: #ffffff;
+  --app-accent: #0a0a0a;
+  --app-accent-soft: #f4f4f5;
 }
 
 @media (prefers-color-scheme: dark) {
   .app-scope {
-    --app-bg: #0b0d12;
-    --app-panel: #12151c;
-    --app-soft: #1a1e27;
-    --app-line: #232834;
-    --app-grid: #1a1e27;
-    --app-ink: #eef0f4;
-    --app-muted: #8a93a6;
-    --app-paper: #0f172a;
-    --app-accent: #ff6a3d;
+    --app-bg: #0a0a0a;
+    --app-panel: #111113;
+    --app-soft: #18181b;
+    --app-line: #27272a;
+    --app-grid: #18181b;
+    --app-ink: #fafafa;
+    --app-muted: #a1a1aa;
+    --app-faint: #52525b;
+    --app-paper: #0f0f10;
+    --app-accent: #fafafa;
+    --app-accent-soft: #1f1f23;
   }
 }
