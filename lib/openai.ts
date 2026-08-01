@@ -1,19 +1,26 @@
-import OpenAI from "openai";
+import {
+  Agent,
+  imageGenerationTool,
+  run,
+  setDefaultOpenAIKey,
+  type AgentOutputItem,
+  type RunItem,
+} from "@openai/agents";
 import { SAMPLE_WEEK, summarizeSource, type WeeklySource } from "./sample-week";
 
-export const TEXT_MODEL = "gpt-5.6-terra";
-export const IMAGE_MODEL = "gpt-5.6";
+export const TEXT_MODEL = "gpt-5";
+export const IMAGE_MODEL = "gpt-image-1";
 
-let cachedClient: OpenAI | null = null;
+let configured = false;
 
-export function getOpenAIClient(): OpenAI {
-  if (cachedClient) return cachedClient;
+function ensureConfigured(): void {
+  if (configured) return;
   const apiKey = process.env.OPENAI_KEY;
   if (!apiKey) {
     throw new Error("OPENAI_KEY is not set in the environment");
   }
-  cachedClient = new OpenAI({ apiKey });
-  return cachedClient;
+  setDefaultOpenAIKey(apiKey);
+  configured = true;
 }
 
 export function getSource(source?: WeeklySource): WeeklySource {
@@ -24,7 +31,18 @@ export function buildSourceContext(source: WeeklySource): string {
   return summarizeSource(source);
 }
 
-type DraftKind = "newsletter" | "linkedin" | "x";
+export type DraftKind = "newsletter" | "linkedin" | "x";
+
+const AUDIENCE_INSTRUCTIONS =
+  "Audience: a non-technical sponsor or partner. They want to know what changed, " +
+  "what it means for them, and what is next. " +
+  "Voice the work in plain language. Keep concrete specs, numbers, and named features " +
+  "when they matter to the reader. " +
+  "Strip engineer-flavored identifiers that do not help the reader: do not mention " +
+  "commit SHAs, repository paths, PR numbers, voice-note IDs, or internal tags. " +
+  "Frame the writing as a progress check, not a play-by-play. Lead with the win, not the diff. " +
+  "You never invent partners, metrics, or testimonials. " +
+  "You avoid em dashes; use hyphens, colons, or rewrite instead.";
 
 export type DraftRequest = {
   kind: DraftKind;
@@ -118,22 +136,52 @@ export async function generateTextDraft(
 export async function generateImage(
   prompt: string,
 ): Promise<{ base64: string }> {
-  const client = getOpenAIClient();
-  const response = await client.responses.create({
-    model: IMAGE_MODEL,
-    input: prompt,
-    tools: [{ type: "image_generation" }],
+  ensureConfigured();
+  const result = await run(imageAgent(), prompt, {});
+  return extractBase64Image(result);
+}
+
+export type GeneratedArtifacts = {
+  newsletter: string;
+  linkedin: string;
+  x: string;
+  linkedinImage?: { base64: string };
+  xImage?: { base64: string };
+};
+
+export type GenerateAllRequest = {
+  source?: WeeklySource;
+  mood?: string;
+  writingSamples?: string[];
+};
+
+export async function generateAll(
+  req: GenerateAllRequest = {},
+): Promise<GeneratedArtifacts> {
+  ensureConfigured();
+  const source = req.source ?? getSource();
+  const draftReq = (kind: DraftKind): DraftRequest => ({
+    kind,
+    source,
+    mood: req.mood,
+    writingSamples: req.writingSamples,
   });
-  for (const item of response.output) {
-    if (
-      item.type === "image_generation_call" &&
-      item.status === "completed" &&
-      item.result
-    ) {
-      return { base64: item.result };
-    }
-  }
-  throw new Error("No completed image_generation_call in response output");
+
+  const newsletterP = generateTextDraft(draftReq("newsletter"));
+  const linkedinP = generateTextDraft(draftReq("linkedin"));
+  const xP = generateTextDraft(draftReq("x"));
+  const linkedinImgP = generateImage(imagePromptForSource(source, "linkedin"));
+  const xImgP = generateImage(imagePromptForSource(source, "x"));
+
+  const [newsletter, linkedin, x, linkedinImage, xImage] = await Promise.all([
+    newsletterP,
+    linkedinP,
+    xP,
+    linkedinImgP,
+    xImgP,
+  ]);
+
+  return { newsletter, linkedin, x, linkedinImage, xImage };
 }
 
 export function imagePromptForSource(
@@ -148,7 +196,7 @@ export function imagePromptForSource(
         ? "square 1024x1024, suitable for an X post image"
         : "landscape 1200x600";
   return (
-    `Editorial illustration for a small dev team's weekly update. ` +
+    `Draw an editorial illustration for a small dev team's weekly update. ` +
     `Theme: ${themes}. ` +
     `Style: flat, modern, minimal, warm neutral palette with one accent color, no logos, no text, no faces. ` +
     `Composition: ${aspect}.`

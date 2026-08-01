@@ -237,6 +237,15 @@ const ENDPOINT_BY_KIND: Record<ArtifactKind, string> = {
   x: "/api/generate/x",
 };
 
+type CombinedResponse = {
+  source: string;
+  newsletter: string;
+  linkedin: string;
+  x: string;
+  linkedinImage?: { mimeType: string; data: string };
+  xImage?: { mimeType: string; data: string };
+};
+
 function approxMetric(kind: ArtifactKind, text: string): string {
   if (kind === "x") return `${text.length} chars`;
   if (kind === "linkedin") return `~${text.length.toLocaleString()} chars`;
@@ -379,12 +388,60 @@ export default function AppHome() {
       return;
     }
     setRunning(true);
+    setState({ status: "loading" });
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const errBody = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(errBody.error ?? `request failed (${res.status})`);
+      }
+      const json = (await res.json()) as CombinedResponse;
+      const targets: ArtifactKind[] =
+        size === "small"
+          ? ["newsletter"]
+          : size === "medium"
+            ? ["newsletter", "linkedin"]
+            : ["newsletter", "linkedin", "x"];
+      const textByKind: Record<ArtifactKind, string> = {
+        newsletter: json.newsletter,
+        linkedin: json.linkedin,
+        x: json.x,
+      };
+      const imageByKind: Partial<Record<ArtifactKind, string>> = {
+        linkedin: json.linkedinImage
+          ? `data:${json.linkedinImage.mimeType};base64,${json.linkedinImage.data}`
+          : undefined,
+        x: json.xImage
+          ? `data:${json.xImage.mimeType};base64,${json.xImage.data}`
+          : undefined,
+      };
+      setArtifacts((prev) =>
+        prev.map((a) =>
+          targets.includes(a.id)
+            ? {
+                ...a,
+                body: textByKind[a.id],
+                metric: approxMetric(a.id, textByKind[a.id]),
+                imageDataUrl: imageByKind[a.id],
+              }
+            : a,
+        ),
+      );
+      setState({ status: "idle" });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setState({ status: "error", error: message });
+    } finally {
+      setRunning(false);
     const order: ArtifactKind[] = ["newsletter", "linkedin", "x"];
     for (const t of order) {
       if (!targets.has(t)) continue;
       await generateOne(t);
     }
-    setRunning(false);
   }
 
   function toggleTarget(kind: ArtifactKind) {
@@ -729,6 +786,49 @@ export default function AppHome() {
               ))}
             </div>
           </section>
+
+          {context && context.sourceCount > 0 && (
+            <section className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
+              <div className="flex items-center justify-between">
+                <h2 className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                  Ingested context
+                </h2>
+                <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--app-muted)]">
+                  {context.tone}
+                </span>
+              </div>
+              {context.themes.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {context.themes.map((theme) => (
+                    <span
+                      key={theme}
+                      className="rounded-full bg-[var(--app-soft)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--app-ink)]"
+                    >
+                      {theme}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {context.bullets.length > 0 && (
+                <ul className="flex flex-col gap-1 text-[11.5px] leading-snug text-[var(--app-ink)]">
+                  {context.bullets.slice(0, 4).map((bullet, i) => (
+                    <li key={i} className="flex gap-2">
+                      <span aria-hidden className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-[var(--app-accent)]" />
+                      <span>{bullet}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <details className="text-[11px] text-[var(--app-muted)]">
+                <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.16em]">
+                  Raw context for the agent
+                </summary>
+                <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--app-line)] bg-[var(--app-soft)] p-3 text-[11px] leading-relaxed text-[var(--app-ink)]">
+                  {context.body}
+                </pre>
+              </details>
+            </section>
+          )}
 
           <section className="flex flex-col gap-3 rounded-2xl border border-[var(--app-line)] bg-[var(--app-panel)] p-4">
             <div className="flex items-center justify-between">
@@ -1098,6 +1198,22 @@ export default function AppHome() {
                   <span>Context · {context.sourceCount} source{context.sourceCount === 1 ? "" : "s"}</span>
                 </>
               )}
+              <p className="whitespace-pre-wrap font-serif text-[1.05rem] leading-[1.45] text-[var(--app-ink)] sm:text-[1.15rem]">
+                {active.body}
+              </p>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-[var(--app-line)] pt-3 font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--app-muted)]">
+                <span>Source · week 32</span>
+                <span className="text-[var(--app-line)]">·</span>
+                <span>Voice · {active.tone.toLowerCase()}</span>
+                <span className="text-[var(--app-line)]">·</span>
+                <span>Length · {active.metric}</span>
+                {context && context.sourceCount > 0 && (
+                  <>
+                    <span className="text-[var(--app-line)]">·</span>
+                    <span>Context · {context.sourceCount} source{context.sourceCount === 1 ? "" : "s"}</span>
+                  </>
+                )}
+              </div>
             </div>
           </article>
 
