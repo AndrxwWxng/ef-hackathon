@@ -141,10 +141,49 @@ function renderBlock(block: LiteBlock): string {
   return `<hr style="border:none;border-top:1px solid ${COLOR_RULE};margin:24px 0;" />`;
 }
 
+export type NewsletterImage = {
+  contentId: string;
+  alt?: string;
+  caption?: string;
+};
+
+function titleFromBody(body: string): string {
+  const lines = body.replace(/\r\n/g, "\n").split("\n");
+  for (const line of lines) {
+    const h = /^(#{1,3})\s+(.+)$/.exec(line.trim());
+    if (h) return h[2].replace(/\*\*/g, "").trim();
+  }
+  return "Weekly update";
+}
+
+function bodyWithoutLeadingTitle(body: string): string {
+  const lines = body.replace(/\r\n/g, "\n").split("\n");
+  let i = 0;
+  while (i < lines.length && !lines[i].trim()) i += 1;
+  if (i < lines.length && /^(#{1,3})\s+/.test(lines[i].trim())) {
+    i += 1;
+    while (i < lines.length && !lines[i].trim()) i += 1;
+    return lines.slice(i).join("\n").trim();
+  }
+  return body.trim();
+}
+
+function renderImageBlock(img: NewsletterImage): string {
+  const alt = escapeHtml(img.alt ?? "App screenshot");
+  const caption = img.caption
+    ? `<div style="margin:6px 0 0 0;font-family:${FONT_MONO};font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:${COLOR_MUTED};">${escapeHtml(img.caption)}</div>`
+    : "";
+  return `<div style="margin:0 0 18px 0;">
+              <img src="cid:${escapeHtml(img.contentId)}" alt="${alt}" width="504" style="display:block;width:100%;max-width:504px;height:auto;border:1px solid ${COLOR_RULE};border-radius:10px;" />
+              ${caption}
+            </div>`;
+}
+
 export function buildNewsletterHtml(opts: {
   body: string;
   author?: string;
   week?: string;
+  images?: NewsletterImage[];
 }): string {
   const dateLine =
     opts.week ??
@@ -156,15 +195,25 @@ export function buildNewsletterHtml(opts: {
     });
   const author = opts.author ?? "Multimail Team";
   const year = new Date().getFullYear();
+  const title = titleFromBody(opts.body);
+  const contentBody = bodyWithoutLeadingTitle(opts.body);
 
-  const blocks = parseLite(opts.body).map(renderBlock).join("\n");
+  const blocks = parseLite(contentBody).map(renderBlock).join("\n");
+  const images = opts.images ?? [];
+  const imageSection =
+    images.length === 0
+      ? ""
+      : `
+            <hr style="border:none;border-top:1px solid ${COLOR_RULE};margin:28px 0;" />
+            <div style="font-family:${FONT_MONO};font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:#9ca3af;margin:0 0 12px 0;">Product shots</div>
+            ${images.map(renderImageBlock).join("\n")}`;
 
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Sponsor dispatch</title>
+<title>${escapeHtml(title)}</title>
 </head>
 <body style="margin:0;padding:0;background:#f5f5f4;color:${COLOR_BODY};-webkit-font-smoothing:antialiased;">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#f5f5f4;">
@@ -172,24 +221,9 @@ export function buildNewsletterHtml(opts: {
     <td align="center" style="padding:24px 12px;">
       <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="max-width:600px;width:100%;background:${COLOR_BG};border:1px solid ${COLOR_RULE};border-radius:12px;overflow:hidden;">
         <tr>
-          <td style="padding:14px 24px;border-bottom:1px solid ${COLOR_RULE};">
-            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
-              <tr>
-                <td style="font-family:${FONT_MONO};font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:${COLOR_MUTED};">
-                  <span style="display:inline-block;vertical-align:middle;margin-right:6px;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="${COLOR_INK}" stroke-width="1.8" style="display:inline-block;vertical-align:middle;"><rect x="2" y="3.5" width="12" height="9" rx="1.5"/><path d="m2.5 4.5 5.5 4 5.5-4"/></svg>
-                  </span>
-                  Email preview
-                </td>
-                <td align="right" style="font-family:${FONT_MONO};font-size:11px;color:${COLOR_MUTED};">Issue &middot; ${escapeHtml(dateLine)}</td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-        <tr>
           <td style="padding:40px 48px 48px 48px;">
             <div style="font-family:${FONT_MONO};font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:#9ca3af;">Multimail &middot; weekly</div>
-            <h1 style="margin:12px 0 0 0;color:${COLOR_INK};font-family:${FONT_SERIF};font-size:34px;font-weight:600;line-height:1.1;letter-spacing:-0.02em;">Sponsor dispatch</h1>
+            <h1 style="margin:12px 0 0 0;color:${COLOR_INK};font-family:${FONT_SERIF};font-size:34px;font-weight:600;line-height:1.1;letter-spacing:-0.02em;">${escapeHtml(title)}</h1>
             <div style="margin-top:8px;font-family:${FONT_SANS};font-size:12px;color:#9ca3af;">
               <span>${escapeHtml(dateLine)}</span>
               <span style="margin:0 6px;">&middot;</span>
@@ -199,6 +233,7 @@ export function buildNewsletterHtml(opts: {
             <div style="font-family:${FONT_SERIF};font-size:16px;line-height:1.7;color:${COLOR_BODY};">
 ${blocks}
             </div>
+${imageSection}
             <hr style="border:none;border-top:1px solid ${COLOR_RULE};margin:36px 0 16px 0;" />
             <div style="font-family:${FONT_SANS};font-size:12px;color:${COLOR_MUTED};">
               <div style="margin:0 0 4px 0;">You are receiving this because you sponsor Multimail.</div>
@@ -229,9 +264,10 @@ export function buildNewsletterText(opts: {
     });
   const author = opts.author ?? "Multimail Team";
   const year = new Date().getFullYear();
+  const title = titleFromBody(opts.body);
   return [
     "Multimail · weekly",
-    "Sponsor dispatch",
+    title,
     `${dateLine} · ${author}`,
     "",
     opts.body.trim(),

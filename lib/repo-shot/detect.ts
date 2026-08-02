@@ -60,10 +60,12 @@ async function detectPackageManager(dir: string): Promise<PackageManager> {
 }
 
 async function installCommand(dir: string, manager: PackageManager) {
-  if (manager === "pnpm") return "pnpm install --frozen-lockfile";
-  if (manager === "yarn") return "yarn install --frozen-lockfile";
-  if (manager === "bun") return "bun install --frozen-lockfile";
-  if (await exists(path.join(dir, "package-lock.json"))) return "npm ci --no-audit --no-fund";
+  // Prefer non-frozen installs: screenshot targets often have drifted lockfiles.
+  // sandbox.installDependencies still retries if a frozen command is configured.
+  if (manager === "pnpm") return "pnpm install --no-frozen-lockfile";
+  if (manager === "yarn") return "yarn install --no-frozen-lockfile";
+  if (manager === "bun") return "bun install";
+  if (await exists(path.join(dir, "package-lock.json"))) return "npm install --no-audit --no-fund";
   return "npm install --no-audit --no-fund";
 }
 

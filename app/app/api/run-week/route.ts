@@ -10,6 +10,7 @@ import {
 } from "@/lib/multimodal/store";
 import { imagePromptForSource, generateImage } from "@/lib/openai";
 import { runAllTargets, type ScreenshotResult, type VideoResult } from "@/lib/agents";
+import { sendNewsletterEmail } from "@/lib/send-newsletter-email";
 import { type WeeklySource } from "@/lib/weekly-source";
 
 export const runtime = "nodejs";
@@ -54,7 +55,16 @@ type RunEvent =
       video?: VideoResult;
     }
   | { type: "complete"; weeklySource: WeeklySource; sources: string[] }
-  | { type: "error"; message: string; group: Stage["group"]; recoverable: boolean };
+  | {
+      type: "email";
+      id: string;
+      to: string[];
+      from: string;
+      subject: string;
+      imageCount: number;
+    }
+  | { type: "error"; message: string; group: Stage["group"]; recoverable: boolean }
+  | { type: "stages"; stages: Stage[] };
 
 type PullOutcome = Awaited<ReturnType<typeof generateRepoHistory>> & { analysis: string };
 
@@ -76,6 +86,8 @@ const STAGE_DEFS: { id: string; group: Stage["group"]; label: string }[] = [
   { id: "ingest.extract", group: "ingest", label: "Extract themes" },
   { id: "ingest.summarize", group: "ingest", label: "Summarize context" },
   { id: "ingest.store", group: "ingest", label: "Store source" },
+  { id: "generate.screenshot", group: "generate", label: "Capture screenshots" },
+  { id: "generate.video", group: "generate", label: "Record walk-through video" },
   ...DRAFT_KINDS.map((kind) => ({
     id: `generate.${kind}`,
     group: "generate" as const,
@@ -95,6 +107,10 @@ function emptyStages(): Stage[] {
     label: def.label,
     status: "pending" as StageStatus,
   }));
+}
+
+function serverLog(line: string): void {
+  console.log(`[run-week] ${line}`);
 }
 
 function approxMetric(kind: DraftKind, text: string): string {
@@ -163,9 +179,14 @@ export async function POST(req: Request): Promise<Response> {
         stages[idx] = next;
         write({ type: "stage", stage: next });
       };
-      const log = (line: string) => write({ type: "log", group: "pull", line });
+      const log = (line: string, group: Stage["group"] = "pull") => {
+        serverLog(line);
+        write({ type: "log", group, line });
+      };
 
       try {
+        // Seed the full stage list so the UI has something to render immediately.
+        write({ type: "stages", stages: stages.map((s) => ({ ...s })) });
         updateStage("pull.init", { status: "running", detail: parsed.repoUrl });
         log(`starting pull for ${parsed.repoUrl}`);
 
@@ -175,7 +196,7 @@ export async function POST(req: Request): Promise<Response> {
           windowDays: body.windowDays,
           windowAnchor: body.windowAnchor,
           updateStage,
-          log,
+          log: (line) => log(line, "pull"),
         });
 
         for (const id of [
@@ -196,10 +217,11 @@ export async function POST(req: Request): Promise<Response> {
 
         for (const warning of history.warnings) {
           write({ type: "error", message: warning, group: "pull", recoverable: true });
-          log(`warning: ${warning}`);
+          log(`warning: ${warning}`, "pull");
         }
 
         const analysisText = history.analysis;
+        log(`repo history ready · ${history.meta.repoName} · analysis ${analysisText.length.toLocaleString()} chars`, "pull");
 
         const ingestInput: IngestInput = {
           modality: "text",
@@ -209,6 +231,7 @@ export async function POST(req: Request): Promise<Response> {
         };
 
         updateStage("ingest.normalize", { status: "running" });
+        log("ingesting repo analysis…", "ingest");
         const ingestResult = await ingestSource(ingestInput, {
           onStep: (step) => {
             if (step.name === "normalize") {
@@ -227,7 +250,9 @@ export async function POST(req: Request): Promise<Response> {
                 detail: step.detail,
               });
             }
+            if (step.detail) log(`${step.name}: ${step.detail}`, "ingest");
           },
+          onLog: (line) => log(line, "ingest"),
         });
         updateStage("ingest.extract", { status: "done" });
         updateStage("ingest.summarize", { status: "done" });
@@ -237,20 +262,21 @@ export async function POST(req: Request): Promise<Response> {
         let storedSources = await addSource(stored);
         updateStage("ingest.store", { status: "done", detail: `${storedSources.length} source${storedSources.length === 1 ? "" : "s"}` });
         write({ type: "source", id: stored.id, label: stored.label });
+        log(`stored source · ${stored.label}`, "ingest");
 
         storedSources = await refreshConnectorSources({
           kind: "discord",
           sources: storedSources,
           updateStage,
           write,
-          log: (line) => write({ type: "log", group: "pull", line }),
+          log: (line) => log(line, "pull"),
         });
         storedSources = await refreshConnectorSources({
           kind: "slack",
           sources: storedSources,
           updateStage,
           write,
-          log: (line) => write({ type: "log", group: "pull", line }),
+          log: (line) => log(line, "pull"),
         });
 
         const weeklySource: WeeklySource = projectToWeeklySource({
@@ -267,9 +293,11 @@ export async function POST(req: Request): Promise<Response> {
         if (needsAgent) {
           updateStage("generate.screenshot", { status: "running", detail: "pre-triggering in parallel with drafts" });
           updateStage("generate.video", { status: "running", detail: "pre-triggering in parallel with drafts" });
+          log("pre-triggering screenshots + video alongside drafts", "generate");
         }
         for (const kind of targets) {
           updateStage(`generate.${kind}`, { status: "running" });
+          log(`drafting ${kind}…`, "generate");
         }
 
         const allStarted = Date.now();
@@ -278,6 +306,18 @@ export async function POST(req: Request): Promise<Response> {
           targets: [...targets],
           mood: body.mood,
           writingSamples: body.writingSamples,
+          onScreenshot: (result) => {
+            log(
+              `screenshots ready · ${result.frames.length} frame${result.frames.length === 1 ? "" : "s"} · ${result.routes.join(", ")}`,
+              "generate",
+            );
+          },
+          onVideo: (result) => {
+            log(
+              `video ready · ${Math.round(result.durationMs / 1000)}s · ${result.outputPath}`,
+              "generate",
+            );
+          },
         });
 
         if (needsAgent) {
@@ -300,9 +340,11 @@ export async function POST(req: Request): Promise<Response> {
           let imageDataUrl: string | undefined;
           if (kind === "linkedin" || kind === "x") {
             try {
+              log(`rendering ${kind} image…`, "generate");
               const prompt = imagePromptForSource(weeklySource, kind);
-              const img = await generateImage(prompt, { kind });
+              const img = await generateImage(prompt);
               imageDataUrl = `data:image/png;base64,${img.base64}`;
+              log(`${kind} image ready`, "generate");
             } catch (err) {
               const message = err instanceof Error ? err.message : String(err);
               write({
@@ -311,6 +353,7 @@ export async function POST(req: Request): Promise<Response> {
                 group: "generate",
                 recoverable: true,
               });
+              log(`${kind} image failed: ${message}`, "generate");
             }
           }
           updateStage(`generate.${kind}`, {
@@ -326,10 +369,56 @@ export async function POST(req: Request): Promise<Response> {
             screenshots: screenshot ?? undefined,
             video: video ?? undefined,
           });
+          log(`draft ready · ${kind} · ${approxMetric(kind, text)}`, "generate");
+
+          if (kind === "newsletter") {
+            try {
+              log("sending newsletter email via SMTP…", "generate");
+              const sent = await sendNewsletterEmail({
+                body: text,
+                to: "andrewwang123118@gmail.com",
+                author: "Multimail Team",
+                week: weeklySource.week,
+                screenshots: screenshot
+                  ? {
+                      repoName: screenshot.repoName,
+                      frames: screenshot.frames.map((frame) => ({
+                        id: frame.id,
+                        route: frame.route,
+                        viewport: frame.viewport,
+                        mimeType: frame.mimeType,
+                        data: frame.data,
+                      })),
+                    }
+                  : null,
+              });
+              write({
+                type: "email",
+                id: sent.id,
+                to: sent.to,
+                from: sent.from,
+                subject: sent.subject,
+                imageCount: sent.imageCount,
+              });
+              log(
+                `newsletter emailed · to ${sent.to.join(", ")} · from ${sent.from} · id ${sent.id}`,
+                "generate",
+              );
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              write({
+                type: "error",
+                message: `newsletter email failed: ${message}`,
+                group: "generate",
+                recoverable: true,
+              });
+              log(`newsletter email failed: ${message}`, "generate");
+            }
+          }
         }
 
         write({ type: "complete", weeklySource, sources: storedSources.map((s) => s.id) });
-        serverLog(`run complete drafts=${targets.length} took=${Date.now() - allStarted}ms`);
+        log(`run complete drafts=${targets.length} took=${Date.now() - allStarted}ms`, "generate");
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "stages", stages })}\n\n`));
         controller.close();
       } catch (err) {
@@ -340,6 +429,7 @@ export async function POST(req: Request): Promise<Response> {
         } else if (message.includes(" generation failed")) {
           group = "generate";
         }
+        log(`run failed: ${message}`, group);
         write({ type: "error", message, group, recoverable: false });
         try {
           controller.close();

@@ -22,11 +22,11 @@
 import { readFile } from 'node:fs/promises';
 import { postToX, describeX, XLengthError, XAuthError, XPayloadError, XNetworkError } from './x.js';
 import {
-  postToLinkedIn, describeLinkedIn, escapeLittleText,
+  postToLinkedIn, describeLinkedIn,
   LinkedInAuthError, LinkedInPayloadError, LinkedInVersionError, LinkedInNetworkError,
 } from './linkedin.js';
 import {
-  sendEmail, describeEmail, htmlToText,
+  sendEmail, describeEmail,
   EmailAuthError, EmailPayloadError, EmailNetworkError,
 } from './email.js';
 

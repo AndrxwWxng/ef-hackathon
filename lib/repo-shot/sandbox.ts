@@ -283,6 +283,23 @@ export async function cloneRepo(repoUrl: string, destination: string, onLog: Log
   return { dir, sha, repoName: normalized.repoName, repoUrl: normalized.url };
 }
 
+function unfrozenInstallArgs(parts: string[]): string[] | null {
+  const joined = parts.join(" ");
+  if (parts[0] === "pnpm" && parts.includes("install")) {
+    return ["pnpm", "install", "--no-frozen-lockfile"];
+  }
+  if (parts[0] === "yarn" && parts.includes("install")) {
+    return ["yarn", "install", "--no-frozen-lockfile"];
+  }
+  if (parts[0] === "bun" && parts.includes("install")) {
+    return ["bun", "install"];
+  }
+  if (parts[0] === "npm" && (parts[1] === "ci" || joined.includes("frozen"))) {
+    return ["npm", "install", "--no-audit", "--no-fund"];
+  }
+  return null;
+}
+
 export async function installDependencies(dir: string, detected: DetectedProject, onLog: Log, timeoutMs = 240000) {
   if (!detected.needsInstall || !detected.installCmd) {
     onLog("install skipped");
@@ -291,9 +308,33 @@ export async function installDependencies(dir: string, detected: DetectedProject
 
   const original = splitCommand(detected.installCmd);
   const parts = await resolveCommand(original, onLog);
-  const env = scrubbedEnv({ npm_config_audit: "false", npm_config_fund: "false", ADBLOCK: "1" });
+  // CI=1 makes pnpm/yarn treat lockfile as frozen; screenshot targets often have
+  // drifted lockfiles, so clear CI for install and retry without frozen flags.
+  const env = scrubbedEnv({
+    npm_config_audit: "false",
+    npm_config_fund: "false",
+    ADBLOCK: "1",
+    npm_config_yes: "true",
+  });
+  delete env.CI;
   onLog(`$ ${parts.join(" ")}`);
   let result = await runCommand({ file: parts[0], args: parts.slice(1), cwd: path.resolve(dir), env, timeoutMs, onLog, label: "install" });
+
+  if (result.code !== 0) {
+    const unfrozen = unfrozenInstallArgs(parts);
+    if (unfrozen) {
+      onLog(`install retry without frozen lockfile: $ ${unfrozen.join(" ")}`);
+      result = await runCommand({
+        file: unfrozen[0],
+        args: unfrozen.slice(1),
+        cwd: path.resolve(dir),
+        env,
+        timeoutMs,
+        onLog,
+        label: "install",
+      });
+    }
+  }
 
   if (result.code !== 0 && parts[0] === "npm") {
     const fallbackArgs = ["install", "--no-audit", "--no-fund", "--legacy-peer-deps"];

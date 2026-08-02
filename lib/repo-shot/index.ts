@@ -18,12 +18,20 @@ import {
   type RepoShotResult,
   type RepoShotStage,
   type RepoShotStep,
+  type RepoVideoFormat,
+  type RepoVideoInput,
+  type RepoVideoOptions,
+  type RepoVideoResult,
+  type RepoVideoStage,
+  type RepoVideoStep,
   type RunningApp,
   type ThemeName,
   type ViewportName,
 } from "./types";
+import { encodeVideoMp4, recordRepoVideo } from "./video";
 
 const STAGES: RepoShotStage[] = ["clone", "detect", "install", "boot", "capture", "frame"];
+const VIDEO_STAGES: RepoVideoStage[] = ["clone", "detect", "install", "boot", "record", "encode"];
 const MAX_LOGS = 400;
 const MAX_ROUTES = 12;
 
@@ -35,6 +43,20 @@ export class RepoShotError extends Error {
   constructor(stage: RepoShotStage, cause: unknown, steps: RepoShotStep[], logs: string[]) {
     super(`${stage} failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
     this.name = "RepoShotError";
+    this.stage = stage;
+    this.steps = steps;
+    this.logs = logs;
+  }
+}
+
+export class RepoVideoError extends Error {
+  stage: RepoVideoStage;
+  steps: RepoVideoStep[];
+  logs: string[];
+
+  constructor(stage: RepoVideoStage, cause: unknown, steps: RepoVideoStep[], logs: string[]) {
+    super(`${stage} failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+    this.name = "RepoVideoError";
     this.stage = stage;
     this.steps = steps;
     this.logs = logs;
@@ -63,6 +85,26 @@ function normalizeViewports(viewports?: ViewportName[]) {
 
 function normalizeTheme(theme?: ThemeName): ThemeName {
   return theme && theme in THEMES ? theme : "sunset";
+}
+
+function normalizeVideoRoutes(routes?: string[]) {
+  const output: string[] = [];
+  for (const value of routes ?? ["/"]) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    const route = /^https?:\/\//i.test(trimmed) || trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+    if (!output.includes(route)) output.push(route);
+    if (output.length === MAX_ROUTES) break;
+  }
+  return output.length ? output : ["/"];
+}
+
+function normalizeVideoViewport(viewport?: ViewportName): ViewportName {
+  return viewport && viewport in VIEWPORT_PRESETS ? viewport : "desktop";
+}
+
+function normalizeVideoFormat(format?: RepoVideoFormat): RepoVideoFormat {
+  return format === "mp4" ? "mp4" : "webm";
 }
 
 function detail(value: unknown) {
@@ -226,7 +268,159 @@ export type {
   RepoShotResult,
   RepoShotStage,
   RepoShotStep,
+  RepoVideoFormat,
+  RepoVideoInput,
+  RepoVideoOptions,
+  RepoVideoResult,
+  RepoVideoStage,
+  RepoVideoStep,
   ThemeName,
   Viewport,
   ViewportName,
 } from "./types";
+
+export async function generateRepoVideo(input: RepoVideoInput, options: RepoVideoOptions = {}): Promise<RepoVideoResult> {
+  const id = randomUUID().replaceAll("-", "").slice(0, 16);
+  const routes = normalizeVideoRoutes(input.routes);
+  const viewport = normalizeVideoViewport(input.viewport);
+  const format = normalizeVideoFormat(input.format);
+  const durationMs = Math.max(1000, Math.min(120_000, input.durationMs ?? 20_000));
+  const perRouteHoldMs = Math.max(80, Math.min(20_000, options.perRouteHoldMs ?? 1800));
+  const scrollStepPx = Math.max(120, Math.min(2000, options.scrollStepPx ?? 600));
+  const title = input.title?.trim().slice(0, 120) ?? "";
+  const outputRoot = path.resolve(options.outputRoot ?? path.join(process.cwd(), ".repo-shot", "videos"));
+  const workRoot = path.resolve(options.workRoot ?? path.join(os.tmpdir(), "multimail-repo-shot"));
+  const outputDir = path.join(outputRoot, id);
+  const workDir = path.join(workRoot, id);
+  const logs: string[] = [];
+  const steps: RepoVideoStep[] = VIDEO_STAGES.map((name) => ({ name, status: "pending", ms: 0, detail: "" }));
+  const createdAt = new Date().toISOString();
+  const log = (line: string) => {
+    const clean = line.replace(/\r/g, "").trimEnd();
+    if (!clean) return;
+    logs.push(clean.length > 600 ? `${clean.slice(0, 600)}…` : clean);
+    if (logs.length > MAX_LOGS) logs.shift();
+    options.onLog?.(clean);
+  };
+  const runStep = async <T>(name: RepoVideoStage, task: () => Promise<T>, summarize?: (result: T) => string | { skipped: boolean; detail: string }): Promise<T> => {
+    const step = steps.find((item) => item.name === name)!;
+    step.status = "running";
+    options.onStep?.({ ...step });
+    const started = Date.now();
+    try {
+      const result = await task();
+      step.ms = Date.now() - started;
+      const summary = summarize?.(result);
+      if (typeof summary === "object") {
+        step.status = summary.skipped ? "skipped" : "done";
+        step.detail = detail(summary.detail);
+      } else {
+        step.status = "done";
+        step.detail = detail(summary);
+      }
+      options.onStep?.({ ...step });
+      return result;
+    } catch (error) {
+      step.ms = Date.now() - started;
+      step.status = "error";
+      step.detail = detail(error instanceof Error ? error.message : String(error));
+      options.onStep?.({ ...step });
+      throw new RepoVideoError(name, error, steps.map((item) => ({ ...item })), [...logs]);
+    }
+  };
+
+  let app: RunningApp | null = null;
+  let browser: Browser | null = options.browser ?? null;
+  let ownsBrowser = false;
+  let detected: DetectedProject | null = null;
+
+  await fs.mkdir(outputDir, { recursive: true });
+  await fs.mkdir(workRoot, { recursive: true });
+
+  try {
+    const cloned = options.skipCloneFrom
+      ? {
+          dir: path.resolve(options.skipCloneFrom),
+          repoUrl: input.repoUrl,
+          repoName: options.repoName ?? path.basename(path.resolve(options.skipCloneFrom)),
+          sha: "local",
+        }
+      : await runStep("clone", () => cloneRepo(input.repoUrl, workDir, log, options.cloneTimeoutMs), (result) => `${result.repoName} @ ${result.sha}`);
+    detected = await runStep("detect", () => detectProject(cloned.dir), (result) => `${result.type} · ${result.framework}`);
+    await runStep(
+      "install",
+      () => installDependencies(cloned.dir, detected!, log, options.installTimeoutMs),
+      (result) => ({ skipped: result.skipped, detail: result.skipped ? "nothing to install" : detected!.installCmd ?? "dependencies installed" }),
+    );
+    app = await runStep("boot", () => startApp(cloned.dir, detected!, log, options.bootTimeoutMs), (result) => result.url);
+
+    if (!browser) {
+      browser = await chromium.launch({ args: ["--disable-dev-shm-usage", "--hide-scrollbars", "--force-color-profile=srgb"] });
+      ownsBrowser = true;
+    }
+
+    const recorded = await runStep(
+      "record",
+      () =>
+        recordRepoVideo({
+          browser: browser!,
+          baseUrl: app!.url,
+          routes,
+          viewport: VIEWPORT_PRESETS[viewport],
+          outDir: outputDir,
+          jobId: id,
+          durationMs,
+          navigationTimeoutMs: options.navigationTimeoutMs ?? 30_000,
+          perRouteHoldMs,
+          scrollStepPx,
+          onLog: log,
+        }),
+      (result) => `${(result.durationMs / 1000).toFixed(1)}s @ ${result.width}x${result.height}`,
+    );
+
+    if (!recorded.rawPath) throw new Error("recording produced no output");
+
+    let encodedPath: string | null = null;
+    if (format === "mp4") {
+      encodedPath = path.join(outputDir, `${id}__${path.basename(recorded.rawPath, path.extname(recorded.rawPath))}.mp4`);
+      await runStep(
+        "encode",
+        () => encodeVideoMp4({ sourcePath: recorded.rawPath, targetPath: encodedPath!, ffmpegPath: options.ffmpegPath }),
+        () => path.basename(encodedPath!),
+      );
+    } else {
+      const encodeStep = steps.find((item) => item.name === "encode")!;
+      encodeStep.status = "skipped";
+      encodeStep.detail = "webm passthrough";
+      options.onStep?.({ ...encodeStep });
+    }
+
+    return {
+      id,
+      repoUrl: cloned.repoUrl,
+      repoName: cloned.repoName,
+      sha: cloned.sha,
+      title: title || cloned.repoName,
+      format,
+      routes,
+      viewport,
+      outputDir,
+      detected,
+      rawPath: recorded.rawPath,
+      encodedPath,
+      durationMs: recorded.durationMs,
+      width: recorded.width,
+      height: recorded.height,
+      steps,
+      logs,
+      createdAt,
+      finishedAt: new Date().toISOString(),
+    };
+  } finally {
+    await app?.stop().catch((error) => log(`app cleanup failed: ${error instanceof Error ? error.message : String(error)}`));
+    if (ownsBrowser) await browser?.close().catch((error) => log(`browser cleanup failed: ${error instanceof Error ? error.message : String(error)}`));
+    if (!options.skipCloneFrom) {
+      await fs.rm(workDir, { recursive: true, force: true }).catch((error) => log(`workspace cleanup failed: ${error instanceof Error ? error.message : String(error)}`));
+    }
+  }
+}

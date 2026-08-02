@@ -5,6 +5,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NewsletterPreview } from "./_components/NewsletterPreview";
 import { LinkedInPreview } from "./_components/LinkedInPreview";
 import { XPreview } from "./_components/XPreview";
+import {
+  PipelinePanel,
+  type LogLine,
+  type Stage,
+  type StageGroup,
+} from "./_components/PipelinePanel";
 
 type Modality = "text" | "audio" | "video" | "discord" | "slack";
 
@@ -41,6 +47,39 @@ type Source = {
 
 type ArtifactKind = "newsletter" | "linkedin" | "x";
 
+type ScreenshotFrame = {
+  id: string;
+  route: string;
+  viewport: string;
+  width: number;
+  height: number;
+  mimeType: "image/png";
+  data: string;
+};
+
+type ScreenshotResult = {
+  repoUrl: string;
+  repoName: string;
+  theme: string;
+  viewports: string[];
+  routes: string[];
+  frames: ScreenshotFrame[];
+};
+
+type VideoResult = {
+  repoUrl: string;
+  repoName: string;
+  viewport: string;
+  format: string;
+  routes: string[];
+  rawPath: string;
+  encodedPath: string | null;
+  outputPath: string;
+  durationMs: number;
+  width: number;
+  height: number;
+};
+
 type Artifact = {
   id: ArtifactKind;
   label: string;
@@ -50,6 +89,8 @@ type Artifact = {
   metric: string;
   tone: string;
   imageDataUrl?: string;
+  screenshots?: ScreenshotResult;
+  video?: VideoResult;
   generated?: boolean;
 };
 
@@ -130,7 +171,7 @@ const initialArtifacts: Artifact[] = [
   {
     id: "newsletter",
     label: "Newsletter",
-    handle: "For sponsors",
+    handle: "For sponsors and users",
     blurb: "A sourced note your partners can read in 90 seconds.",
     body:
       "This week we shipped a faster ingest path (4x), closed two long-standing integration gaps, and softened the digest tone. Next up: a calmer mobile view, a sponsor-only changelog, and a quiet month-end recap.",
@@ -210,24 +251,30 @@ function describeSource(source: Source): string {
   return formatDuration(source.durationMs) || "—";
 }
 
-const ENDPOINT_BY_KIND: Record<ArtifactKind, string> = {
-  newsletter: "/api/generate/newsletter",
-  linkedin: "/api/generate/linkedin",
-  x: "/api/generate/x",
-};
-
-const LABEL_BY_KIND: Record<ArtifactKind, string> = {
-  newsletter: "newsletter",
-  linkedin: "LinkedIn post",
-  x: "X post",
-};
-
-function approxMetric(kind: ArtifactKind, text: string): string {
-  if (kind === "x") return `${text.length} chars`;
-  if (kind === "linkedin") return `~${text.length.toLocaleString()} chars`;
-  const words = text.trim().split(/\s+/).filter(Boolean).length;
-  return `${words} words`;
-}
+type RunEvent =
+  | { type: "stage"; stage: Stage }
+  | { type: "log"; group: StageGroup; line: string }
+  | { type: "source"; id: string; label: string }
+  | {
+      type: "draft";
+      kind: ArtifactKind;
+      text: string;
+      metric: string;
+      imageDataUrl?: string;
+      screenshots?: ScreenshotResult;
+      video?: VideoResult;
+    }
+  | { type: "complete"; sources: string[] }
+  | {
+      type: "email";
+      id: string;
+      to: string[];
+      from: string;
+      subject: string;
+      imageCount: number;
+    }
+  | { type: "error"; message: string; group: StageGroup; recoverable: boolean }
+  | { type: "stages"; stages: Stage[] };
 
 type ConnectorDraft = {
   modality: "discord" | "slack";
@@ -284,6 +331,12 @@ export default function AppHome() {
     ],
     mood: "Calm and measured",
   });
+  const [logLines, setLogLines] = useState<LogLine[]>([]);
+  const [stages, setStages] = useState<Stage[]>([]);
+  const [hasRun, setHasRun] = useState(false);
+  const [pipelineError, setPipelineError] = useState<string | null>(null);
+  const lineCounterRef = useRef(0);
+  const runIdRef = useRef(0);
 
   const active = useMemo(
     () => artifacts.find((a) => a.id === activeId) ?? artifacts[0],
@@ -321,12 +374,6 @@ export default function AppHome() {
   }, [refresh]);
 
   const writtenSamples = sourceConfig.writingSamples.filter((s) => s.trim().length > 0);
-
-  const payloadBody = JSON.stringify({
-    repoUrl: sourceConfig.github,
-    mood: sourceConfig.mood === "default" ? undefined : sourceConfig.mood,
-    writingSamples: writtenSamples,
-  });
 
   const githubDisplay = sourceConfig.github.trim().length > 0
     ? sourceConfig.github.trim()
@@ -371,49 +418,184 @@ export default function AppHome() {
     return `Week ${repoAge.weeks} · since ${sinceFmt.format(created)}`;
   }, [repoAge]);
 
-  async function generateOne(kind: ArtifactKind, imageAfter: boolean): Promise<void> {
+  async function runWeekStream(targetList: ArtifactKind[]): Promise<void> {
+    setRunning(true);
     setState({ status: "loading" });
+    setFeedback("");
+    setLogLines([]);
+    setStages([]);
+    setPipelineError(null);
+    setProgress(null);
+    setEmailSent(null);
+    setEmailError("");
+    lineCounterRef.current = 0;
+    runIdRef.current += 1;
+    const runId = runIdRef.current;
+
+    const pushLine = (group: StageGroup, text: string) => {
+      lineCounterRef.current += 1;
+      const id = `l-${runId}-${lineCounterRef.current}`;
+      const at = Date.now();
+      setLogLines((prev) => {
+        const next = prev.length > 500 ? prev.slice(prev.length - 499) : prev.slice();
+        next.push({ id, group, text, at });
+        return next;
+      });
+    };
+
+    let res: Response;
     try {
-      const textRes = await fetch(ENDPOINT_BY_KIND[kind], {
+      res = await fetch("/app/api/run-week", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: payloadBody,
+        body: JSON.stringify({
+          repoUrl: sourceConfig.github,
+          targets: targetList,
+          mood: sourceConfig.mood === "default" ? undefined : sourceConfig.mood,
+          writingSamples: writtenSamples,
+        }),
       });
-      if (!textRes.ok) {
-        const errBody = (await textRes.json().catch(() => ({}))) as { error?: string };
-        throw new Error(errBody.error ?? `text request failed (${textRes.status})`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not start the run.";
+      setState({ status: "error", error: message });
+      setRunning(false);
+      setHasRun(true);
+      pushLine("pull", `request failed before streaming started: ${message}`);
+      return;
+    }
+
+    if (!res.ok || !res.body) {
+      let detail = `run-week responded ${res.status}`;
+      try {
+        const json = (await res.json()) as { error?: string };
+        if (json.error) detail = json.error;
+      } catch {
+        /* ignore non-JSON error bodies */
       }
-      const textJson = (await textRes.json()) as { text: string };
-      let imageDataUrl: string | undefined;
-      if (imageAfter) {
-        const imgRes = await fetch("/api/generate/image", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ kind, repoUrl: sourceConfig.github }),
-        });
-        if (imgRes.ok) {
-          const imgJson = (await imgRes.json()) as { mimeType: string; data: string };
-          imageDataUrl = `data:${imgJson.mimeType};base64,${imgJson.data}`;
+      setState({ status: "error", error: detail });
+      setRunning(false);
+      setHasRun(true);
+      pushLine("pull", detail);
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let errored = false;
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx = buffer.indexOf("\n\n");
+        while (idx >= 0) {
+          const raw = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          const dataLine = raw
+            .split("\n")
+            .map((line) => line.trimEnd())
+            .find((line) => line.startsWith("data:"));
+          const trimmed = dataLine ? dataLine.slice(5).trimStart() : raw.trim();
+          if (trimmed.length > 0) {
+            try {
+              const event = JSON.parse(trimmed) as RunEvent;
+              switch (event.type) {
+                case "stage":
+                  setStages((prev) => {
+                    const next = [...prev];
+                    const existing = next.findIndex((s) => s.id === event.stage.id);
+                    if (existing >= 0) next[existing] = event.stage;
+                    else next.push(event.stage);
+                    return next;
+                  });
+                  break;
+                case "log":
+                  pushLine(event.group, event.line);
+                  break;
+                case "email":
+                  setEmailSent({
+                    id: event.id,
+                    to: event.to,
+                    subject: event.subject,
+                  });
+                  setEmailError("");
+                  pushLine(
+                    "generate",
+                    `newsletter emailed · to ${event.to.join(", ")} · from ${event.from} · id ${event.id}`,
+                  );
+                  break;
+                case "draft":
+                  setArtifacts((prev) =>
+                    prev.map((a) =>
+                      a.id === event.kind
+                        ? {
+                            ...a,
+                            body: event.text,
+                            metric: event.metric,
+                            imageDataUrl: event.imageDataUrl ?? a.imageDataUrl,
+                            screenshots: event.screenshots ?? a.screenshots,
+                            video: event.video ?? a.video,
+                            generated: true,
+                          }
+                        : a,
+                    ),
+                  );
+                  pushLine("generate", `draft ready · ${event.kind} · ${event.metric}`);
+                  break;
+                case "source":
+                  pushLine("ingest", `stored source: ${event.label}`);
+                  break;
+                case "error":
+                  pushLine(event.group, `error: ${event.message}`);
+                  if (event.message.startsWith("newsletter email failed:")) {
+                    setEmailError(event.message.replace(/^newsletter email failed:\s*/, ""));
+                    setEmailSent(null);
+                  }
+                  if (!event.recoverable) {
+                    errored = true;
+                    setPipelineError(event.message);
+                  }
+                  break;
+                case "complete":
+                  pushLine(
+                    "generate",
+                    `complete: ${event.sources.length} source${event.sources.length === 1 ? "" : "s"} in context`,
+                  );
+                  break;
+                case "stages":
+                  setStages(event.stages);
+                  break;
+              }
+            } catch {
+              pushLine("pull", `[unparsed event] ${trimmed.slice(0, 200)}`);
+            }
+          }
+          idx = buffer.indexOf("\n\n");
         }
       }
-      setArtifacts((prev) =>
-        prev.map((a) =>
-          a.id === kind
-            ? {
-              ...a,
-              body: textJson.text,
-              metric: approxMetric(kind, textJson.text),
-              imageDataUrl,
-              generated: true,
-            }
-            : a,
-        ),
-      );
-      setState({ status: "idle" });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      setState({ status: "error", error: message });
+      const message = err instanceof Error ? err.message : String(err);
+      pushLine("pull", `stream interrupted: ${message}`);
+      errored = true;
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        /* already released */
+      }
     }
+
+    setRunning(false);
+    setHasRun(true);
+    setPipelineError(errored ? "Run did not finish. See the activity log." : null);
+    setState(
+      errored
+        ? { status: "error", error: "Run did not finish. See the activity log." }
+        : { status: "idle" },
+    );
+    await refresh().catch(() => undefined);
   }
 
   async function handleRun() {
@@ -421,85 +603,14 @@ export default function AppHome() {
       setState({ status: "error", error: "Pick at least one artifact to generate." });
       return;
     }
-    setRunning(true);
-    setState({ status: "loading" });
-    setFeedback("");
-
-    const order: ArtifactKind[] = ["newsletter", "linkedin", "x"];
-    const queue = order.filter((t) => targets.has(t));
-    const artifactTotal = queue.length;
-
-    type Step = { kind: ArtifactKind; phase: "read" | "draft" | "image" };
-    const plan: Step[] = [];
-    for (const kind of queue) {
-      plan.push({ kind, phase: "read" });
-      plan.push({ kind, phase: "draft" });
-      if (kind === "linkedin" || kind === "x") plan.push({ kind, phase: "image" });
+    if (!sourceConfig.github.trim()) {
+      setState({ status: "error", error: "Set a GitHub repo in Configuration first." });
+      return;
     }
-    const stepsTotal = plan.length;
-    let stepCursor = 0;
-    let currentArtifactIndex = 0;
-
-    setProgress({
-      step: 0,
-      steps: stepsTotal,
-      artifactIndex: 0,
-      artifactTotal,
-      artifactLabel: LABEL_BY_KIND[queue[0]],
-      stepLabel: "Starting run",
-    });
-
-    for (const step of plan) {
-      if (queue.indexOf(step.kind) !== currentArtifactIndex) {
-        currentArtifactIndex = queue.indexOf(step.kind);
-      }
-      const artifactLabel = LABEL_BY_KIND[step.kind];
-      const stepLabel =
-        step.phase === "read"
-          ? `Reading ${artifactLabel} repo history`
-          : step.phase === "draft"
-            ? `Writing ${artifactLabel} draft`
-            : `Rendering ${artifactLabel} image`;
-
-      setProgress((p) =>
-        p
-          ? {
-              ...p,
-              artifactIndex: currentArtifactIndex,
-              artifactLabel,
-              step: stepCursor,
-              stepLabel,
-            }
-          : p,
-      );
-
-      if (step.phase === "draft") {
-        const hasImageStep = plan.some(
-          (s) => s.kind === step.kind && s.phase === "image",
-        );
-        await generateOne(step.kind, hasImageStep);
-      } else {
-        // "read" and "image" phases don't have a dedicated client-side call —
-        // they happen server-side as part of generateOne, but we tick the
-        // cursor so the bar visibly advances between draft and image phases.
-      }
-
-      stepCursor += 1;
-      setProgress((p) => (p ? { ...p, step: stepCursor } : p));
-    }
-
-    setProgress((p) =>
-      p
-        ? {
-            ...p,
-            step: p.steps,
-            stepLabel: `Done · ${artifactTotal} draft${artifactTotal === 1 ? "" : "s"}`,
-          }
-        : p,
+    const targetList = (["newsletter", "linkedin", "x"] as ArtifactKind[]).filter((kind) =>
+      targets.has(kind),
     );
-    setRunning(false);
-    setState({ status: "idle" });
-    window.setTimeout(() => setProgress(null), 1200);
+    await runWeekStream(targetList);
   }
 
   function selectTab(kind: ArtifactKind) {
@@ -555,6 +666,19 @@ export default function AppHome() {
       setEmailError("");
       setEmailSent(null);
       try {
+        const screenshots =
+          active.screenshots && active.screenshots.frames.length > 0
+            ? {
+                repoName: active.screenshots.repoName,
+                frames: active.screenshots.frames.slice(0, 6).map((frame) => ({
+                  id: frame.id,
+                  route: frame.route,
+                  viewport: frame.viewport,
+                  mimeType: frame.mimeType,
+                  data: frame.data,
+                })),
+              }
+            : null;
         const res = await fetch("/app/api/send-email", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -562,6 +686,7 @@ export default function AppHome() {
             body: markdown,
             author: authorForKind(active.id),
             week: githubDisplay,
+            screenshots,
           }),
         });
         const json = (await res.json().catch(() => ({}))) as {
@@ -569,6 +694,7 @@ export default function AppHome() {
           to?: string[];
           subject?: string;
           error?: string;
+          imageCount?: number;
         };
         if (!res.ok || !json.id) {
           setEmailError(json.error ?? `Send failed (${res.status})`);
@@ -587,19 +713,48 @@ export default function AppHome() {
     }
 
     async function handlePostToX() {
-      const text = "Hello world!";
+      const text = active.body.trim();
+      if (!text) {
+        setPostError("X post body is empty.");
+        return;
+      }
       setPosting(true);
       setPostError("");
       setPosted(null);
       try {
+        const screenshots =
+          active.screenshots && active.screenshots.frames.length > 0
+            ? {
+                frames: active.screenshots.frames.slice(0, 4).map((frame) => ({
+                  mimeType: frame.mimeType,
+                  data: frame.data,
+                  route: frame.route,
+                  viewport: frame.viewport,
+                })),
+              }
+            : null;
         const res = await fetch("/app/api/x/post", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify({
+            text,
+            screenshots,
+            imageDataUrl: active.imageDataUrl,
+          }),
         });
-        const json = (await res.json().catch(() => ({}))) as { error?: string; url?: string; text?: string };
+        const json = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          url?: string;
+          text?: string;
+          mediaCount?: number;
+          mediaErrors?: string[];
+        };
         if (!res.ok || !json.url) {
-          setPostError(json.error ?? `Post failed (${res.status})`);
+          const mediaHint =
+            json.mediaErrors && json.mediaErrors.length > 0
+              ? ` (media: ${json.mediaErrors[0]})`
+              : "";
+          setPostError((json.error ?? `Post failed (${res.status})`) + mediaHint);
           return;
         }
         setPosted({ url: json.url, text: json.text ?? text });
@@ -611,31 +766,14 @@ export default function AppHome() {
     }
 
     async function handleRegenerate() {
+      if (running) return;
       setEmailSent(null);
       setEmailError("");
-      setRunning(true);
-      const label = LABEL_BY_KIND[activeId];
-      const hasImage = activeId === "linkedin" || activeId === "x";
-      const steps = hasImage ? 2 : 1;
-      setProgress({
-        step: 0,
-        steps,
-        artifactIndex: 0,
-        artifactTotal: 1,
-        artifactLabel: label,
-        stepLabel: `Re-reading ${label} repo history`,
-      });
-      await generateOne(activeId, hasImage);
-      setProgress({
-        step: steps,
-        steps,
-        artifactIndex: 0,
-        artifactTotal: 1,
-        artifactLabel: label,
-        stepLabel: "Done",
-      });
-      setRunning(false);
-      window.setTimeout(() => setProgress(null), 1200);
+      if (!sourceConfig.github.trim()) {
+        setState({ status: "error", error: "Set a GitHub repo in Configuration first." });
+        return;
+      }
+      await runWeekStream([activeId]);
     }
 
     const isGenerating = running || state.status === "loading";
@@ -858,10 +996,7 @@ export default function AppHome() {
       {/* Main grid */}
       <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row lg:items-stretch">
         {/* Sidebar */}
-        <aside
-          className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-1"
-          style={isDesktop ? { width: `${sidebarWidth}px`, flexShrink: 0 } : undefined}
-        >
+        <aside className="flex min-h-0 w-full flex-col gap-3 overflow-y-auto pr-1 lg:w-[340px] lg:shrink-0">
           {/* Sources */}
           <section className="flex flex-col rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)]">
             <div className="flex items-center justify-between border-b border-[var(--app-line)] px-4 py-3">
@@ -1441,6 +1576,32 @@ function ChannelPreview({
             alt={`${artifact.label} generated image`}
             className="block w-full"
           />
+        </div>
+      )}
+      {artifact.screenshots && artifact.screenshots.frames.length > 0 && (
+        <div className="mx-auto mt-3 grid max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2">
+          {artifact.screenshots.frames.map((frame) => (
+            <div
+              key={frame.id}
+              className="overflow-hidden rounded-xl border border-[var(--app-line)]"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={`data:${frame.mimeType};base64,${frame.data}`}
+                alt={`${artifact.screenshots?.repoName ?? "app"} ${frame.route} (${frame.viewport})`}
+                className="block w-full"
+              />
+              <div className="border-t border-[var(--app-line)] bg-[var(--app-panel)] px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--app-muted)]">
+                {frame.route} · {frame.viewport}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {artifact.video && (
+        <div className="mx-auto mt-3 max-w-2xl rounded-xl border border-[var(--app-line)] bg-[var(--app-panel)] px-3 py-2 font-mono text-[11px] text-[var(--app-muted)]">
+          walk-through recorded: {artifact.video.outputPath} ({Math.round(artifact.video.durationMs / 1000)}s,{" "}
+          {artifact.video.width}x{artifact.video.height})
         </div>
       )}
     </div>

@@ -59,7 +59,7 @@ function encodeUrnForUrl(urn) {
   return encodeURIComponent(urn);
 }
 
-export async function postToLinkedIn(text, opts = {}) {
+export async function postToLinkedIn(text) {
   const accessToken = process.env.LINKEDIN_ACCESS_TOKEN;
   const personUrn = process.env.LINKEDIN_PERSON_URN;
   if (!accessToken) throw new LinkedInAuthError('Missing env: LINKEDIN_ACCESS_TOKEN');

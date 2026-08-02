@@ -38,6 +38,7 @@ export const THEMES = {
 export type ViewportName = keyof typeof VIEWPORT_PRESETS;
 export type ThemeName = keyof typeof THEMES;
 export type RepoShotStage = "clone" | "detect" | "install" | "boot" | "capture" | "frame";
+export type RepoVideoStage = "clone" | "detect" | "install" | "boot" | "record" | "encode";
 export type ProjectType = "node" | "static" | "python" | "unknown";
 export type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
 
@@ -76,6 +77,15 @@ export type RepoShotStep = {
   ms: number;
   detail: string;
 };
+
+export type RepoVideoStep = {
+  name: RepoVideoStage;
+  status: "pending" | "running" | "done" | "skipped" | "error";
+  ms: number;
+  detail: string;
+};
+
+export type RepoVideoFormat = "webm" | "mp4";
 
 export type RepoShotInput = {
   repoUrl: string;
@@ -124,4 +134,52 @@ export type RunningApp = {
   url: string;
   port: number;
   stop: () => Promise<void>;
+};
+
+export type RepoVideoInput = {
+  repoUrl: string;
+  routes?: string[];
+  viewport?: ViewportName;
+  durationMs?: number;
+  format?: RepoVideoFormat;
+  title?: string;
+};
+
+export type RepoVideoOptions = {
+  outputRoot?: string;
+  workRoot?: string;
+  cloneTimeoutMs?: number;
+  installTimeoutMs?: number;
+  bootTimeoutMs?: number;
+  navigationTimeoutMs?: number;
+  perRouteHoldMs?: number;
+  scrollStepPx?: number;
+  browser?: Browser;
+  skipCloneFrom?: string;
+  repoName?: string;
+  onLog?: (line: string) => void;
+  onStep?: (step: RepoVideoStep) => void;
+  ffmpegPath?: string;
+};
+
+export type RepoVideoResult = {
+  id: string;
+  repoUrl: string;
+  repoName: string;
+  sha: string;
+  title: string;
+  format: RepoVideoFormat;
+  routes: string[];
+  viewport: ViewportName;
+  outputDir: string;
+  detected: DetectedProject;
+  rawPath: string;
+  encodedPath: string | null;
+  durationMs: number;
+  width: number;
+  height: number;
+  steps: RepoVideoStep[];
+  logs: string[];
+  createdAt: string;
+  finishedAt: string;
 };

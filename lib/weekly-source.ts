@@ -169,7 +169,7 @@ export function summarizeSource(source: WeeklySource): string {
     lines.push(`Stack hint: ${source.stackHint}`);
   }
   if (source.repoUrl) {
-    lines.push(`App repo: ${source.repoUrl}`);
+    lines.push(`App repo (screenshottable): ${source.repoUrl}`);
   }
   if (source.routes && source.routes.length > 0) {
     lines.push(`App routes: ${source.routes.join(", ")}`);

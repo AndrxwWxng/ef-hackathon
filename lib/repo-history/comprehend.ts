@@ -24,7 +24,7 @@ import type { RepoHistoryMeta } from "./types";
  * of this pipeline invented the "why" from a lookup table.
  */
 
-export const COMPREHEND_MODEL = process.env.REPO_COMPREHEND_MODEL ?? "gpt-5";
+export const COMPREHEND_MODEL = "gpt-5.6-luna"
 
 export type CommitUnderstanding = {
   sha: string;

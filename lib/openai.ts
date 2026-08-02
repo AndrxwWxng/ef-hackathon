@@ -3,8 +3,6 @@ import {
   imageGenerationTool,
   run,
   setDefaultOpenAIKey,
-  type AgentOutputItem,
-  type RunItem,
 } from "@openai/agents";
 import OpenAI from "openai";
 import { summarizeSource, type WeeklySource } from "./weekly-source";

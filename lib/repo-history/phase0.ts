@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { repoNameFromUrl, runGit } from "./git";
-import type { RepoHistoryMeta, RepoHistoryOptions, WindowAnchor } from "./types";
+import type { RepoHistoryMeta, WindowAnchor } from "./types";
 
 export type CloneResult = {
   cloneDir: string;

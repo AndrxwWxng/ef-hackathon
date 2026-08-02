@@ -237,8 +237,8 @@ export function PipelinePanel({ stages, logs, running, hasRun, onClear, error, t
                     <ul className="flex flex-col gap-0.5">
                       {items.map((stage) => {
                         const liveMs =
-                          stage.status === "running" && stage.startedAt
-                            ? now - stage.startedAt
+                          stage.status === "running" && stage.startedAt && now > 0
+                            ? Math.max(0, now - stage.startedAt)
                             : stage.ms ?? 0;
                         const showTime = stage.status === "done" || stage.status === "running";
                         const muted = stage.status === "pending";
@@ -317,7 +317,9 @@ export function PipelinePanel({ stages, logs, running, hasRun, onClear, error, t
                 No log lines yet.
               </p>
             ) : (
-              visibleLogs.map((line) => <LogLineRow key={line.id} line={line} />)
+              visibleLogs.map((line, idx) => (
+                <LogLineRow key={`${line.id}-${idx}`} line={line} />
+              ))
             )}
           </div>
         </div>
